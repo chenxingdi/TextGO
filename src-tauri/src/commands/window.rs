@@ -21,6 +21,9 @@ pub struct WindowPlacement {
 // window position offset from cursor
 const WINDOW_OFFSET: i32 = 5;
 
+// gap between the popup and the toolbar when the popup is placed above it
+const POPUP_TOOLBAR_GAP: f64 = 8.0;
+
 // bottom safe area offset to avoid taskbar/dock
 const SAFE_AREA_BOTTOM: i32 = 80;
 
@@ -150,7 +153,29 @@ pub fn show_popup(app: AppHandle, payload: String, mouse: Option<bool>) -> Resul
     Ok(())
 }
 
+/// Vertical bounds of the toolbar window in logical pixels.
+///
+/// Returns `(top, bottom)` and `(None, None)` when the toolbar window is unavailable.
+fn toolbar_vertical_bounds(app: &AppHandle, fallback_scale: f64) -> (Option<f64>, Option<f64>) {
+    let Some(toolbar) = app.get_webview_window("toolbar") else {
+        return (None, None);
+    };
+
+    let scale_factor = toolbar.scale_factor().unwrap_or(fallback_scale);
+    let (Ok(position), Ok(size)) = (toolbar.outer_position(), toolbar.outer_size()) else {
+        return (None, None);
+    };
+
+    // convert to logical coordinates on macOS
+    let top = position.y as f64 / scale_factor;
+    let height = size.height as f64 / scale_factor;
+
+    (Some(top), Some(top + height))
+}
+
 /// Show popup window and position it at the given logical position.
+///
+/// The popup prefers the area above the visible toolbar, then below it, so the toolbar stays usable.
 #[tauri::command]
 pub fn show_popup_sameplace(
     app: AppHandle,
@@ -164,16 +189,19 @@ pub fn show_popup_sameplace(
     drop(source_focus);
 
     if let Some(window) = app.get_webview_window("popup") {
+        // get popup window size in logical pixels
+        let scale_factor = window.scale_factor()?;
+        let window_size = window.outer_size()?;
+        let window_width = window_size.width as f64 / scale_factor;
+        let window_height = window_size.height as f64 / scale_factor;
+
+        // keep the toolbar visible by placing the popup next to it
+        let (toolbar_top, toolbar_bottom) = toolbar_vertical_bounds(&app, scale_factor);
+
         // set window position with safe area constraints if screen info is provided
         let position = if let (Some(screen_size), Some(screen_position)) =
             (placement.screen_size, placement.screen_position)
         {
-            // get popup window size
-            let window_size = window.outer_size()?;
-            let scale_factor = window.scale_factor()?;
-            let window_width = window_size.width as f64 / scale_factor;
-            let window_height = window_size.height as f64 / scale_factor;
-
             // get screen size and position
             let screen_width = screen_size.width;
             let screen_height = screen_size.height;
@@ -187,10 +215,26 @@ pub fn show_popup_sameplace(
             let min_y = screen_y;
             let max_y = (screen_y + screen_height - window_height - safe_area_bottom).max(min_y);
 
+            // prefer the area above the toolbar, then below it, then the original placement
+            let target_y = match (toolbar_top, toolbar_bottom) {
+                (Some(toolbar_top), Some(toolbar_bottom)) => {
+                    let above = toolbar_top - window_height - POPUP_TOOLBAR_GAP;
+                    let below = toolbar_bottom + POPUP_TOOLBAR_GAP;
+                    if above >= min_y {
+                        above
+                    } else if below <= max_y {
+                        below
+                    } else {
+                        placement.window_position.y
+                    }
+                }
+                _ => placement.window_position.y,
+            };
+
             // clamp window position to safe area
             LogicalPosition {
                 x: placement.window_position.x.clamp(min_x, max_x),
-                y: placement.window_position.y.clamp(min_y, max_y),
+                y: target_y.clamp(min_y, max_y),
             }
         } else {
             // use window position directly if screen info is not available
@@ -311,9 +355,12 @@ fn wait_and_emit(flag: &'static AtomicBool, window: WebviewWindow, payload: Stri
     let window_label = window.label().to_string();
     let event_name = format!("show-{}", window_label);
 
+    // broadcast to every window so listeners such as the toolbar can react as well
+    let app_handle = window.app_handle().clone();
+
     // if already initialized, emit immediately
     if flag.load(Ordering::Relaxed) {
-        let _ = window.emit(&event_name, payload);
+        let _ = app_handle.emit(&event_name, payload);
         return;
     }
 
@@ -330,7 +377,7 @@ fn wait_and_emit(flag: &'static AtomicBool, window: WebviewWindow, payload: Stri
         }
 
         // emit event after initialization or timeout
-        let _ = window.emit(&event_name, payload);
+        let _ = app_handle.emit(&event_name, payload);
     });
 }
 

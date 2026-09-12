@@ -341,6 +341,8 @@ fn setup_app(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
                             }
 
                             hide_window(&app_handle, "popup");
+                            // notify other windows so the toolbar can restore its colors
+                            let _ = app_handle.emit("hide-popup", ());
                         }
                     }
                 }

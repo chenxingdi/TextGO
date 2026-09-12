@@ -7,6 +7,7 @@
     TOOLBAR_ACTION_COUNT,
     TOOLBAR_AUTO_HIDE_DELAY,
     TOOLBAR_CORNER_RADIUS,
+    TOOLBAR_DIM_OPACITY,
     TOOLBAR_OPACITY
   } from '$lib/constants';
   import {
@@ -25,6 +26,7 @@
     toolbarAutoHide,
     toolbarAutoHideDelay,
     toolbarCornerRadius,
+    toolbarDimOpacity,
     toolbarMaxActions,
     toolbarOpacity
   } from '$lib/stores.svelte';
@@ -69,6 +71,9 @@
   // track if mouse is inside toolbar
   let pointerInside = $state(false);
   let hoverEnabled = $state(true);
+
+  // whether a result window is currently shown above the toolbar
+  let dimmed = $state(false);
 
   // whether the toolbar is rendering as an HTML menu
   let menuMode = $state(false);
@@ -143,6 +148,18 @@
     return `${highlightGradient}, ${actionGlowGradient}`;
   });
 
+  // toolbar dimmed opacity while a result window is shown
+  let dimOpacityValue = $derived.by(() => {
+    const value = toolbarDimOpacity.current;
+    const opacity = Number.isFinite(value)
+      ? Math.min(TOOLBAR_DIM_OPACITY.max, Math.max(TOOLBAR_DIM_OPACITY.min, Math.trunc(value)))
+      : TOOLBAR_DIM_OPACITY.default;
+    return opacity / 100;
+  });
+
+  // actual toolbar opacity, restored to full while the pointer is inside
+  let contentOpacity = $derived(dimmed && !pointerInside ? dimOpacityValue : 1);
+
   /**
    * Clear the pending toolbar auto-hide timer.
    */
@@ -159,7 +176,7 @@
   function startAutoHideTimer(value = toolbarAutoHideDelay.current) {
     clearAutoHideTimer();
 
-    if (!toolbarAutoHide.current || !autoHideReady || pointerInside || nativeMenuOpen) {
+    if (!toolbarAutoHide.current || !autoHideReady || pointerInside || nativeMenuOpen || dimmed) {
       return;
     }
 
@@ -169,7 +186,7 @@
 
     autoHideTimer = setTimeout(async () => {
       autoHideTimer = null;
-      if (!toolbarAutoHide.current || !autoHideReady || pointerInside || nativeMenuOpen) {
+      if (!toolbarAutoHide.current || !autoHideReady || pointerInside || nativeMenuOpen || dimmed) {
         return;
       }
 
@@ -190,8 +207,9 @@
     const ready = autoHideReady;
     const hovering = pointerInside;
     const menuOpen = nativeMenuOpen;
+    const dimming = dimmed;
 
-    if (!enabled || !ready || hovering || menuOpen) {
+    if (!enabled || !ready || hovering || menuOpen || dimming) {
       clearAutoHideTimer();
       return;
     }
@@ -588,8 +606,6 @@
       // get current window placement
       const placement = await windowPlacement();
       if (!isCurrent() || requestId !== selectionRequestId) return;
-      // hide the toolbar window
-      await currentWindow.hide();
 
       if (action.rule.preview) {
         if (action.rule.outputMode === 'replace') {
@@ -616,6 +632,12 @@
         // execute the action normally
         await execute(action.rule, selectedText, placement, () => isCurrent() && requestId === selectionRequestId);
       }
+
+      // keep the toolbar visible after the action and resume the auto-hide countdown
+      if (isCurrent() && requestId === selectionRequestId) {
+        autoHideReady = true;
+        startAutoHideTimer();
+      }
     } catch (error) {
       console.error(`Failed to execute action: ${error}`);
     }
@@ -635,6 +657,7 @@
       selectionRequestId += 1;
       autoHideReady = false;
       pointerInside = false;
+      dimmed = false;
       clearAutoHideTimer();
       initialized = false;
       setup(JSON.parse(event.payload))
@@ -654,9 +677,19 @@
     const unlistenWindowHide = listen('hide-toolbar', () => {
       autoHideReady = false;
       pointerInside = false;
+      dimmed = false;
       clearAutoHideTimer();
       initialized = false;
       menuMode = false;
+    });
+
+    // dim the toolbar while a result window is shown
+    const unlistenPopupShow = listen('show-popup', () => {
+      dimmed = true;
+      clearAutoHideTimer();
+    });
+    const unlistenPopupHide = listen('hide-popup', () => {
+      dimmed = false;
     });
 
     // listen to mouse enter/exit events
@@ -673,6 +706,8 @@
       clearAutoHideTimer();
       unlistenWindowShow.then((fn) => fn());
       unlistenWindowHide.then((fn) => fn());
+      unlistenPopupShow.then((fn) => fn());
+      unlistenPopupHide.then((fn) => fn());
       unlistenMouseExited.then((fn) => fn());
       unlistenMouseEntered.then((fn) => fn());
     };
@@ -690,7 +725,11 @@
       style:border-radius={cornerRadiusStyle}
       in:fly={{ y: -6, duration: 100 }}
     >
-      <div class="w-52 bg-base-200/95 py-1 backdrop-blur-sm" bind:this={container}>
+      <div
+        class="w-52 bg-base-200/95 py-1 backdrop-blur-sm transition-opacity duration-200"
+        style:opacity={contentOpacity}
+        bind:this={container}
+      >
         {#each actions as action (action.id)}
           <button
             class="flex h-8 w-full cursor-pointer items-center gap-2 px-2 text-left transition-colors"
@@ -715,7 +754,12 @@
       style:border-radius={cornerRadiusStyle}
       in:fly={{ y: -10, duration: 100 }}
     >
-      <div class="flex h-8 w-max min-w-max" style:background-color={toolbarBackgroundStyle} bind:this={container}>
+      <div
+        class="flex h-8 w-max min-w-max transition-opacity duration-200"
+        style:background-color={toolbarBackgroundStyle}
+        style:opacity={contentOpacity}
+        bind:this={container}
+      >
         <span
           class="flex shrink-0 cursor-grab items-center opacity-20 transition-opacity active:cursor-grabbing"
           class:hover:opacity-90={hoverEnabled}

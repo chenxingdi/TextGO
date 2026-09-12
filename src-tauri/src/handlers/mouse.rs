@@ -127,9 +127,6 @@ pub fn handle_mouse_event(event: Event) {
             if matches!(close_native_menu(key, event.platform_code), Ok(true)) {
                 return;
             }
-
-            // hide toolbar on key press
-            let _ = hide_toolbar(false);
         }
         EventType::KeyRelease(Key::ShiftLeft) | EventType::KeyRelease(Key::ShiftRight) => {
             SHIFT_PRESSED.set(false);
@@ -461,6 +458,47 @@ fn close_native_menu(key: Key, platform_code: u32) -> Result<bool, AppError> {
     Ok(false)
 }
 
+/// Check whether a click position falls inside the visible popup window bounds.
+fn is_inside_popup(click_x: f64, click_y: f64) -> bool {
+    let Ok(handle) = APP_HANDLE.lock() else {
+        return false;
+    };
+    let Some(popup) = handle.as_ref().and_then(|app| app.get_webview_window("popup")) else {
+        return false;
+    };
+
+    // the popup is only relevant while it is visible
+    if !popup.is_visible().unwrap_or(false) {
+        return false;
+    }
+
+    // get scale factor for coordinate conversion
+    #[cfg(target_os = "windows")]
+    let scale_factor = 1.0;
+    #[cfg(not(target_os = "windows"))]
+    let scale_factor = popup
+        .current_monitor()
+        .ok()
+        .flatten()
+        .map(|m| m.scale_factor())
+        .unwrap_or(1.0);
+
+    let (Ok(position), Ok(size)) = (popup.outer_position(), popup.outer_size()) else {
+        return false;
+    };
+
+    // convert to logical coordinates on macOS
+    let popup_x = position.x as f64 / scale_factor;
+    let popup_y = position.y as f64 / scale_factor;
+    let popup_width = size.width as f64 / scale_factor;
+    let popup_height = size.height as f64 / scale_factor;
+
+    click_x >= popup_x
+        && click_x <= popup_x + popup_width
+        && click_y >= popup_y
+        && click_y <= popup_y + popup_height
+}
+
 /// Hide toolbar if click is outside its bounds.
 fn hide_toolbar(check_position: bool) -> Result<(), AppError> {
     // get toolbar window
@@ -508,7 +546,8 @@ fn hide_toolbar(check_position: bool) -> Result<(), AppError> {
         || click_y < toolbar_y
         || click_y > toolbar_y + toolbar_height;
 
-    if is_outside {
+    // keep the toolbar while the click targets the result window next to it
+    if is_outside && !is_inside_popup(click_x, click_y) {
         // the close request is intercepted in lib.rs to emit hide event
         let _ = toolbar.close();
     }
