@@ -10,6 +10,7 @@
     TOOLBAR_ACTION_COUNT,
     TOOLBAR_AUTO_HIDE_DELAY,
     TOOLBAR_CORNER_RADIUS,
+    TOOLBAR_DIM_OPACITY,
     TOOLBAR_OPACITY
   } from '$lib/constants';
   import { m } from '$lib/paraglide/messages';
@@ -20,6 +21,7 @@
     toolbarAutoHide,
     toolbarAutoHideDelay,
     toolbarCornerRadius,
+    toolbarDimOpacity,
     toolbarHideOnScroll,
     toolbarMaxActions,
     toolbarOpacity
@@ -42,6 +44,7 @@
 
   const toolbarCornerRadiusMarks = createRangeMarks(TOOLBAR_CORNER_RADIUS, 4);
   const toolbarOpacityMarks = createRangeMarks(TOOLBAR_OPACITY, 3);
+  const toolbarDimOpacityMarks = createRangeMarks(TOOLBAR_DIM_OPACITY, 3);
   const toolbarAutoHideDelayMarks = createRangeMarks(TOOLBAR_AUTO_HIDE_DELAY, 4);
 
   const popupCornerRadiusMarks = createRangeMarks(POPUP_CORNER_RADIUS, 4);
@@ -88,6 +91,25 @@
         />
         <div class="flex justify-between text-xs opacity-70">
           {#each toolbarOpacityMarks as opacity (opacity)}
+            <span>{opacity}%</span>
+          {/each}
+        </div>
+      </label>
+    </fieldset>
+    <div class="divider my-0 opacity-60"></div>
+    <fieldset class="flex items-center justify-between gap-1">
+      <Label tip={m.toolbar_dim_opacity_explain()} tipPlacement="duplex">{m.toolbar_dim_opacity()}</Label>
+      <label class="flex max-w-2/5 grow flex-col gap-2 pt-2">
+        <input
+          class="range w-full text-emphasis range-xs"
+          type="range"
+          min={TOOLBAR_DIM_OPACITY.min}
+          max={TOOLBAR_DIM_OPACITY.max}
+          step={TOOLBAR_DIM_OPACITY.step}
+          bind:value={toolbarDimOpacity.current}
+        />
+        <div class="flex justify-between text-xs opacity-70">
+          {#each toolbarDimOpacityMarks as opacity (opacity)}
             <span>{opacity}%</span>
           {/each}
         </div>

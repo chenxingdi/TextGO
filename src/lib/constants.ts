@@ -88,6 +88,16 @@ export const TOOLBAR_OPACITY = {
 };
 
 /**
+ * Toolbar dimmed opacity percentage while a result window is shown.
+ */
+export const TOOLBAR_DIM_OPACITY = {
+  min: 10,
+  default: 45,
+  max: 100,
+  step: 5
+};
+
+/**
  * Popup corner radius in pixels.
  */
 export const POPUP_CORNER_RADIUS = {

@@ -6,6 +6,7 @@ import {
   TOOLBAR_ACTION_COUNT,
   TOOLBAR_AUTO_HIDE_DELAY,
   TOOLBAR_CORNER_RADIUS,
+  TOOLBAR_DIM_OPACITY,
   TOOLBAR_OPACITY
 } from '$lib/constants';
 import { isSystemTheme, type Theme, type ThemeSetting } from '$lib/theme';
@@ -240,6 +241,9 @@ export const toolbarCornerRadius = persisted<number>('toolbarCornerRadius', TOOL
 
 // toolbar background opacity percentage
 export const toolbarOpacity = persisted<number>('toolbarOpacity', TOOLBAR_OPACITY.default);
+
+// toolbar opacity percentage while a result window is shown
+export const toolbarDimOpacity = persisted<number>('toolbarDimOpacity', TOOLBAR_DIM_OPACITY.default);
 
 // whether to hide the toolbar automatically after inactivity
 export const toolbarAutoHide = persisted<boolean>('toolbarAutoHide', false);
