@@ -13,3 +13,7 @@ src-tauri/gen/
 
 # Static Assets
 static/
+
+# Local build scripts
+scripts/build-local.sh
+scripts/build-local.ps1
