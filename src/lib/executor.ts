@@ -357,7 +357,9 @@ const promptExecutor: Executor = async (rule, entry, placement, isCurrent = () =
   }
 
   await prompts.ready;
-  if (!isCurrent()) return true;
+  if (!isCurrent()) {
+    return true;
+  }
   const promptId = rule.action.substring(PROMPT_MARK.length);
   const prompt = prompts.current.find((p) => p.id === promptId);
   if (!prompt) {
@@ -376,7 +378,9 @@ const promptExecutor: Executor = async (rule, entry, placement, isCurrent = () =
     entry.result = renderPrompt(prompt.prompt, entry);
     entry.systemPrompt = renderPrompt(prompt.systemPrompt || '', entry);
   }
-  if (!isCurrent()) return true;
+  if (!isCurrent()) {
+    return true;
+  }
   // save history record
   entry.actionType = 'prompt';
   entry.actionLabel = promptId;
@@ -409,9 +413,10 @@ const searcherExecutor: Executor = async (rule, entry) => {
   }
 
   console.debug(`Opening URLs for searcher: ${searcherId}`);
-  // replace {{selection}} and split newline-separated URL templates
+  // replace template parameters and split newline-separated URLs
   const urls = searcher.url
     .replace(/\{\{selection\}\}/g, encodeURIComponent(entry.selection.trim()))
+    .replace(/\{\{clipboard\}\}/g, encodeURIComponent(entry.clipboard.trim()))
     .split(/\r\n?|\n/)
     .map((url) => url.trim())
     .filter(Boolean);
@@ -563,7 +568,9 @@ export async function renderTranslationPrompt(
   translation: TranslationPrompt,
   sourceLanguage = ''
 ): Promise<{ result: string; systemPrompt: string }> {
-  if (!entry.selection.trim()) return { result: '', systemPrompt: '' };
+  if (!entry.selection.trim()) {
+    return { result: '', systemPrompt: '' };
+  }
   const sourceCode = sourceLanguage || (await guessNaturalLanguage(entry.selection));
   const sourceValue =
     NATURAL_CASES.find(({ value }) => value === sourceCode)?.promptValue || 'Unknown (infer from source text)';

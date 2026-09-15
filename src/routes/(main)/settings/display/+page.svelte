@@ -22,6 +22,7 @@
   import {
     popupCornerRadius,
     popupFontSize,
+    popupLineWrapping,
     popupOpacity,
     popupRememberPosition,
     prompts,
@@ -306,6 +307,11 @@
     <fieldset class="flex items-center justify-between gap-1">
       <Label tip={m.popup_remember_position_explain()} tipPlacement="duplex">{m.popup_remember_position()}</Label>
       <Toggle bind:value={popupRememberPosition.current} />
+    </fieldset>
+    <div class="divider my-0 opacity-60"></div>
+    <fieldset class="flex items-center justify-between gap-1">
+      <Label tip={m.popup_line_wrapping_explain()} tipPlacement="duplex">{m.popup_line_wrapping()}</Label>
+      <Toggle bind:value={popupLineWrapping.current} />
     </fieldset>
   </Setting>
 </div>
