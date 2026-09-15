@@ -1,8 +1,19 @@
 import { PROMPT_MARK, SCRIPT_MARK, SEARCHER_MARK } from '$lib/constants';
-import { isMouseShortcut } from '$lib/helpers';
+import { isMouseShortcut, popupPositionKey } from '$lib/helpers';
 import { guessNaturalLanguage, NATURAL_CASES } from '$lib/matcher';
 import { m } from '$lib/paraglide/messages';
-import { denoPath, entries, historySize, nodePath, prompts, pythonPath, scripts, searchers } from '$lib/stores.svelte';
+import {
+  denoPath,
+  entries,
+  historySize,
+  nodePath,
+  popupPositions,
+  popupRememberPosition,
+  prompts,
+  pythonPath,
+  scripts,
+  searchers
+} from '$lib/stores.svelte';
 import type { Entry, Processor, Rule, Script, TranslationPrompt, WindowPlacement } from '$lib/types';
 import { invoke } from '@tauri-apps/api/core';
 import { openPath, openUrl } from '@tauri-apps/plugin-opener';
@@ -461,6 +472,49 @@ const builtinExecutor: Executor = async (rule, entry, placement) => {
 const EXECUTORS: Executor[] = [defaultExecutor, scriptExecutor, promptExecutor, searcherExecutor, builtinExecutor];
 
 /**
+ * Create the record a rule execution works on.
+ *
+ * @param rule - rule being executed
+ * @param selection - selected text
+ * @param clipboard - clipboard snapshot taken for this execution
+ * @returns record object
+ */
+function createEntry(rule: Rule, selection: string, clipboard: string): Entry {
+  return {
+    id: crypto.randomUUID(),
+    shortcut: rule.shortcut,
+    caseLabel: rule.caseLabel,
+    datetime: new Date().toISOString(),
+    clipboard: clipboard,
+    selection: selection
+  };
+}
+
+/**
+ * Run the executor chain until one of them handles the rule.
+ *
+ * @param rule - rule to execute
+ * @param entry - record the executors populate
+ * @param placement - optional placement for popup window
+ * @param isCurrent - checks whether the request is still current
+ * @returns promise resolving to preview text, or an empty string when handled or superseded
+ */
+async function runExecutors(
+  rule: Rule,
+  entry: Entry,
+  placement: WindowPlacement | undefined,
+  isCurrent: () => boolean
+): Promise<string> {
+  for (const executor of EXECUTORS) {
+    const result = await executor(rule, entry, placement, isCurrent);
+    if (result) {
+      return typeof result === 'string' ? result : '';
+    }
+  }
+  return '';
+}
+
+/**
  * Execute action.
  *
  * @param rule - rule object
@@ -475,27 +529,25 @@ export async function execute(
   placement?: WindowPlacement,
   isCurrent: () => boolean = rule.preview ? () => true : createExecutionGuard()
 ): Promise<string> {
-  const datetime = new Date().toISOString();
   const clipboard = await invoke<string>('get_clipboard_text');
 
-  // generate record
-  const entry: Entry = {
-    id: crypto.randomUUID(),
-    shortcut: rule.shortcut,
-    caseLabel: rule.caseLabel,
-    datetime: datetime,
-    clipboard: clipboard,
-    selection: selection
-  };
+  return runExecutors(rule, createEntry(rule, selection, clipboard), placement, isCurrent);
+}
 
-  // execute executors in chain until one succeeds
-  for (const executor of EXECUTORS) {
-    const result = await executor(rule, entry, placement, isCurrent);
-    if (result) {
-      return typeof result === 'string' ? result : '';
-    }
-  }
-  return '';
+/**
+ * Execute a rule for its toolbar label preview.
+ *
+ * Every preview of one toolbar shares a single clipboard snapshot, so the labels stay consistent
+ * with each other and the clipboard is read once for the whole batch instead of once per label.
+ * Previews never expire themselves; the caller bounds them with a timeout.
+ *
+ * @param rule - rule to preview
+ * @param selection - selected text the toolbar was opened for
+ * @param clipboard - clipboard snapshot shared by the batch
+ * @returns promise resolving to preview text
+ */
+export async function executePreview(rule: Rule, selection: string, clipboard: string): Promise<string> {
+  return runExecutors(rule, createEntry(rule, selection, clipboard), undefined, () => true);
 }
 
 /**
@@ -632,16 +684,22 @@ function saveHistory(entry: Entry): void {
  * @param placement - optional placement for popup window
  */
 async function showPopup(entry: Entry, placement?: WindowPlacement): Promise<void> {
+  const memoryPosition = popupRememberPosition.current
+    ? (popupPositions.current[popupPositionKey(entry)] ?? null)
+    : null;
+
   try {
     if (placement) {
       await invoke('show_popup_sameplace', {
         payload: JSON.stringify(entry),
-        placement: placement
+        placement: placement,
+        memoryPosition
       });
     } else {
       await invoke('show_popup', {
         payload: JSON.stringify(entry),
-        mouse: isMouseShortcut(entry.shortcut)
+        mouse: isMouseShortcut(entry.shortcut),
+        memoryPosition
       });
     }
   } catch (error) {

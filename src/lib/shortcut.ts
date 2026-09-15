@@ -1,5 +1,5 @@
 import { createExecutionGuard, execute } from '$lib/executor';
-import { shortcuts } from '$lib/stores.svelte';
+import { shortcuts, toolbarPlacement } from '$lib/stores.svelte';
 import type { Rule } from '$lib/types';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -88,7 +88,7 @@ export class Manager {
       // handle long press shortcut
       if (LONG_PRESS_SHORTCUT === shortcut) {
         const payload = JSON.stringify({ rules: [{ action: 'paste', shortcut }], selection, mouse: true });
-        await invoke('show_toolbar', { payload, mouse: true });
+        await invoke('show_toolbar', { payload, mouse: true, ...toolbarPlacement() });
         return;
       }
 
@@ -121,13 +121,13 @@ export class Manager {
         // show toolbar window
         const payload = JSON.stringify({ rules, selection, mouse });
         if (mouse) {
-          await invoke('show_toolbar', { payload, mouse });
+          await invoke('show_toolbar', { payload, mouse, ...toolbarPlacement() });
         } else {
           // slight delay to ensure keyboard event has fully processed
           setTimeout(async () => {
             if (!isCurrent()) return;
             try {
-              await invoke('show_toolbar', { payload, mouse });
+              await invoke('show_toolbar', { payload, mouse, ...toolbarPlacement() });
             } catch (error) {
               console.error(`Failed to show toolbar: ${error}`);
             }

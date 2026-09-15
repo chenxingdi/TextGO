@@ -1,4 +1,5 @@
 import { DBCLICK_SHORTCUT, DRAG_SHORTCUT, SHIFT_CLICK_SHORTCUT } from '$lib/constants';
+import type { Entry } from '$lib/types';
 import { m } from '$lib/paraglide/messages';
 import { getLocale, locales, type Locale } from '$lib/paraglide/runtime';
 import { invoke } from '@tauri-apps/api/core';
@@ -201,4 +202,23 @@ export function dumpExtension(extension: Extension): string {
     null,
     2
   );
+}
+
+/**
+ * Build the key used to remember a popup position for one action.
+ *
+ * @param entry - popup payload, `null` while the window is hidden
+ * @returns stable key identifying the action that opened the popup
+ */
+export function popupPositionKey(entry: Entry | null | undefined): string {
+  if (!entry) {
+    return 'default';
+  }
+  if (entry.positionKey) {
+    return entry.positionKey;
+  }
+  if (entry.actionType || entry.actionLabel) {
+    return `${entry.actionType ?? 'action'}:${entry.actionLabel ?? 'default'}`;
+  }
+  return 'default';
 }

@@ -7,7 +7,7 @@ use crate::platform;
 use crate::{
     APP_HANDLE, CLIPBOARD_RESTORE_INTERRUPTED, ENIGO, IBEAM_CURSOR, LONG_PRESS,
     LONG_PRESS_DURATION, SELECTION_TEXT_CACHE, SHORTCUT_PAUSED, SHORTCUT_SUSPEND,
-    TOOLBAR_HIDE_ON_SCROLL, TOOLBAR_MENU_OPEN,
+    TOOLBAR_MENU_OPEN,
 };
 use enigo::{Direction, Key as EnigoKey, Keyboard, Mouse};
 use log::debug;
@@ -15,7 +15,7 @@ use rdev::{Button, Event, EventType, Key};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, WebviewWindow};
 
 #[cfg(target_os = "windows")]
 const WINDOWS_KEY_C: u32 = 0x43;
@@ -124,15 +124,14 @@ pub fn handle_mouse_event(event: Event) {
             }
 
             // close native action menu on key press
-            if matches!(close_native_menu(key, event.platform_code), Ok(true)) {
-                return;
-            }
+            let _ = close_native_menu(key, event.platform_code);
         }
         EventType::KeyRelease(Key::ShiftLeft) | EventType::KeyRelease(Key::ShiftRight) => {
             SHIFT_PRESSED.set(false);
         }
-        EventType::Wheel { .. } if TOOLBAR_HIDE_ON_SCROLL.load(Ordering::Relaxed) => {
-            // hide toolbar on wheel scroll
+        EventType::Wheel { .. } if !is_cursor_over_popup() => {
+            // the toolbar always disappears on wheel scrolling; scrolling the result window
+            // itself is the one exception, otherwise its content could not be read
             let _ = hide_toolbar(false);
         }
         _ => (),
@@ -458,17 +457,20 @@ fn close_native_menu(key: Key, platform_code: u32) -> Result<bool, AppError> {
     Ok(false)
 }
 
-/// Check whether a click position falls inside the visible popup window bounds.
-fn is_inside_popup(click_x: f64, click_y: f64) -> bool {
+/// Check whether a point falls inside the bounds of one of our own windows.
+fn is_inside_window(label: &str, x: f64, y: f64) -> bool {
     let Ok(handle) = APP_HANDLE.lock() else {
         return false;
     };
-    let Some(popup) = handle.as_ref().and_then(|app| app.get_webview_window("popup")) else {
+    let Some(window) = handle
+        .as_ref()
+        .and_then(|app| app.get_webview_window(label))
+    else {
         return false;
     };
 
-    // the popup is only relevant while it is visible
-    if !popup.is_visible().unwrap_or(false) {
+    // the window is only relevant while it is visible
+    if !window.is_visible().unwrap_or(false) {
         return false;
     }
 
@@ -476,31 +478,47 @@ fn is_inside_popup(click_x: f64, click_y: f64) -> bool {
     #[cfg(target_os = "windows")]
     let scale_factor = 1.0;
     #[cfg(not(target_os = "windows"))]
-    let scale_factor = popup
+    let scale_factor = window
         .current_monitor()
         .ok()
         .flatten()
         .map(|m| m.scale_factor())
         .unwrap_or(1.0);
 
-    let (Ok(position), Ok(size)) = (popup.outer_position(), popup.outer_size()) else {
+    let (Ok(position), Ok(size)) = (window.outer_position(), window.outer_size()) else {
         return false;
     };
 
     // convert to logical coordinates on macOS
-    let popup_x = position.x as f64 / scale_factor;
-    let popup_y = position.y as f64 / scale_factor;
-    let popup_width = size.width as f64 / scale_factor;
-    let popup_height = size.height as f64 / scale_factor;
+    let left = position.x as f64 / scale_factor;
+    let top = position.y as f64 / scale_factor;
+    let width = size.width as f64 / scale_factor;
+    let height = size.height as f64 / scale_factor;
 
-    click_x >= popup_x
-        && click_x <= popup_x + popup_width
-        && click_y >= popup_y
-        && click_y <= popup_y + popup_height
+    x >= left && x <= left + width && y >= top && y <= top + height
+}
+
+/// Check whether the cursor currently sits inside the visible popup window.
+///
+/// The popup floats above every other window, so its bounds are what the cursor really hits;
+/// scrolling the result text there must not dismiss the toolbar.
+fn is_cursor_over_popup() -> bool {
+    let Ok((x, y)) = mouse_pos() else {
+        return false;
+    };
+
+    is_inside_window("popup", x, y)
 }
 
 /// Hide toolbar if click is outside its bounds.
 fn hide_toolbar(check_position: bool) -> Result<(), AppError> {
+    // the native action menu is a separate window, so a click on one of its items lands outside
+    // the toolbar: dismissing it here would hide the toolbar out from under the action the user
+    // is about to run, which also defeats the action picked to keep the toolbar on screen
+    if TOOLBAR_MENU_OPEN.load(Ordering::Relaxed) {
+        return Ok(());
+    }
+
     // get toolbar window
     let toolbar = APP_HANDLE
         .lock()?
@@ -515,7 +533,7 @@ fn hide_toolbar(check_position: bool) -> Result<(), AppError> {
 
     // if no need to check position, hide directly
     if !check_position {
-        let _ = toolbar.close();
+        dismiss_toolbar(&toolbar);
         return Ok(());
     }
 
@@ -547,10 +565,28 @@ fn hide_toolbar(check_position: bool) -> Result<(), AppError> {
         || click_y > toolbar_y + toolbar_height;
 
     // keep the toolbar while the click targets the result window next to it
-    if is_outside && !is_inside_popup(click_x, click_y) {
-        // the close request is intercepted in lib.rs to emit hide event
-        let _ = toolbar.close();
+    if is_outside && !is_inside_window("popup", click_x, click_y) {
+        dismiss_toolbar(&toolbar);
     }
 
     Ok(())
+}
+
+/// Hide the toolbar window and tell the frontend it was dismissed.
+///
+/// `close()` reaches the same result only through the close interception in lib.rs, so hiding
+/// directly keeps the routine dismissal on one explicit path and leaves that interception for
+/// real close requests.
+fn dismiss_toolbar(toolbar: &WebviewWindow) {
+    if let Err(error) = toolbar.hide() {
+        debug!("Failed to hide toolbar: {:?}", error);
+    }
+
+    if let Some(app) = APP_HANDLE
+        .lock()
+        .ok()
+        .and_then(|handle| handle.as_ref().cloned())
+    {
+        let _ = app.emit("hide-toolbar", ());
+    }
 }

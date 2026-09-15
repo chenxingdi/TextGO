@@ -75,3 +75,5 @@ export async function evalAsync(data: Record<string, string>, code: string): Pro
 (window as any)._fetch = fetch;
 (window as any)._ = _;
 (window as any)._keyboard = Object.freeze({ press: sendKey });
+// expose natural language detection (ISO 639-1 code or null) to user scripts
+(window as any)._detectLanguage = (text: string) => invoke<string | null>('detect_natural_language', { text });

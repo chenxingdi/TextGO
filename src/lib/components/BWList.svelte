@@ -11,6 +11,8 @@
     type?: 'black' | 'white';
     /** The list of items. */
     list: string[];
+    /** Whether website entries can be added to the list. */
+    websites?: boolean;
   };
 
   // operating system type
@@ -25,7 +27,7 @@
   import { open } from '@tauri-apps/plugin-dialog';
   import { debounce } from 'es-toolkit/function';
 
-  let { type = 'black', list = $bindable([]) }: BWListProps = $props();
+  let { type = 'black', list = $bindable([]), websites = true }: BWListProps = $props();
   const icon = $derived(type === 'black' ? { icon: ProhibitIcon, iconClass: 'rotate-90' } : { icon: CheckFatIcon });
   const title = $derived(type === 'black' ? m.blacklist() : m.whitelist());
 
@@ -121,12 +123,14 @@
       class="btn-soft font-normal"
       onclick={addApplication}
     />
-    <Button
-      icon={GlobeIcon}
-      text={type === 'black' ? m.block_website() : m.allow_website()}
-      square={false}
-      class="btn-soft font-normal"
-      onclick={addWebsite}
-    />
+    {#if websites}
+      <Button
+        icon={GlobeIcon}
+        text={type === 'black' ? m.block_website() : m.allow_website()}
+        square={false}
+        class="btn-soft font-normal"
+        onclick={addWebsite}
+      />
+    {/if}
   </div>
 </Modal>

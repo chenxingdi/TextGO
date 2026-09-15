@@ -1,8 +1,9 @@
 use crate::{error::AppError, SETTINGS_STORE};
 use serde::Deserialize;
+use std::sync::{LazyLock, Mutex};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager};
 use tauri_plugin_store::StoreExt;
 
 const DEFAULT_LOCALE: &str = "en";
@@ -136,17 +137,29 @@ pub fn initialize_tray(app: &AppHandle) -> Result<(), AppError> {
     let _tray = builder.build(app)?;
     app.manage(TrayMenu(menu));
 
+    // the main window may have asked for its locale before the tray existed
+    let pending_locale = PENDING_TRAY_LOCALE.lock()?.take();
+    if let Some(locale) = pending_locale {
+        let tray = app.state::<TrayMenu>();
+        apply_tray_locale(app, &tray.0, &locale)?;
+    }
+
     Ok(())
 }
 
-/// Persist the application locale and update existing tray menu items in place.
-#[tauri::command]
-pub fn set_tray_locale(
-    app: AppHandle,
-    menu: State<'_, TrayMenu>,
-    locale: String,
+/// Locale requested while the tray menu did not exist yet.
+///
+/// The main window asks for its locale as soon as its frontend loads, which can happen before
+/// [`initialize_tray`] manages the menu, so the request is parked here and applied afterwards.
+static PENDING_TRAY_LOCALE: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
+
+/// Update every tray menu item to the given locale and remember it.
+fn apply_tray_locale(
+    app: &AppHandle,
+    menu: &Menu<tauri::Wry>,
+    locale: &str,
 ) -> Result<(), AppError> {
-    let locale = supported_locale(&locale)
+    let locale = supported_locale(locale)
         .ok_or_else(|| AppError::from(format!("Unsupported locale: {locale}")))?;
     let labels = load_tray_labels(locale)?;
 
@@ -158,7 +171,6 @@ pub fn set_tray_locale(
         ("quit", labels.tray_quit),
     ] {
         let item = menu
-            .0
             .get(id)
             .ok_or_else(|| AppError::from(format!("Tray menu item not found: {id}")))?;
         item.as_menuitem()
@@ -171,6 +183,18 @@ pub fn set_tray_locale(
     store.save()?;
 
     Ok(())
+}
+
+/// Persist the application locale and update existing tray menu items in place.
+#[tauri::command]
+pub fn set_tray_locale(app: AppHandle, locale: String) -> Result<(), AppError> {
+    // the tray is created during app setup, so this request can arrive before the menu exists
+    let Some(tray) = app.try_state::<TrayMenu>() else {
+        *PENDING_TRAY_LOCALE.lock()? = Some(locale);
+        return Ok(());
+    };
+
+    apply_tray_locale(&app, &tray.0, &locale)
 }
 
 /// Show about dialog.

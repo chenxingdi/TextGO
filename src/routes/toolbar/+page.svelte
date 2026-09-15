@@ -7,32 +7,36 @@
     TOOLBAR_ACTION_COUNT,
     TOOLBAR_AUTO_HIDE_DELAY,
     TOOLBAR_CORNER_RADIUS,
-    TOOLBAR_DIM_OPACITY,
-    TOOLBAR_OPACITY
+    TOOLBAR_OPACITY,
+    TOOLBAR_PREVIEW_TIMEOUT
   } from '$lib/constants';
   import {
     CONVERT_ACTIONS,
     createExecutionGuard,
     DEFAULT_ACTIONS,
     execute,
+    executePreview,
     GENERAL_ACTIONS,
     PROCESS_ACTIONS
   } from '$lib/executor';
   import { resolvePhosphorIcon } from '$lib/phosphor';
   import {
+    popupPositions,
+    popupRememberPosition,
     prompts,
     scripts,
     searchers,
+    toolbarAlwaysDisplayAction,
     toolbarAutoHide,
     toolbarAutoHideDelay,
     toolbarCornerRadius,
-    toolbarDimOpacity,
     toolbarMaxActions,
-    toolbarOpacity
+    toolbarOpacity,
+    toolbarPlacement
   } from '$lib/stores.svelte';
   import type { Rule, WindowPlacement } from '$lib/types';
   import { invoke } from '@tauri-apps/api/core';
-  import { LogicalPosition, LogicalSize } from '@tauri-apps/api/dpi';
+  import { LogicalPosition } from '@tauri-apps/api/dpi';
   import { listen } from '@tauri-apps/api/event';
   import { Image } from '@tauri-apps/api/image';
   import { IconMenuItem, Menu } from '@tauri-apps/api/menu';
@@ -47,20 +51,24 @@
   import RobotIcon from 'phosphor-svelte/lib/RobotIcon';
   import type { Component } from 'svelte';
   import { mount, onMount, tick, unmount } from 'svelte';
+  import { SvelteMap } from 'svelte/reactivity';
   import { fly } from 'svelte/transition';
 
   // operating system type
   const osType = type();
   const isWindows = osType === 'windows';
 
-  // bottom safe area offset to avoid taskbar/dock, aligned with Tauri window positioning
-  const SAFE_AREA_BOTTOM = 80;
+  // extra window pixels beyond the content and its padding, absorbing sub-pixel rounding
+  const WINDOW_SLACK = 2;
 
   // current window
   const currentWindow = getCurrentWindow();
 
   // toolbar initialized state
   let initialized = $state(false);
+
+  // toolbar root element, whose padding is the transparent inset around the visible content
+  let root: HTMLElement | null = $state(null);
 
   // main container element
   let container: HTMLDivElement | null = $state(null);
@@ -71,9 +79,6 @@
   // track if mouse is inside toolbar
   let pointerInside = $state(false);
   let hoverEnabled = $state(true);
-
-  // whether a result window is currently shown above the toolbar
-  let dimmed = $state(false);
 
   // whether the toolbar is rendering as an HTML menu
   let menuMode = $state(false);
@@ -90,6 +95,15 @@
     label: string;
     rule: Rule;
   };
+
+  // outcome of a toolbar setup attempt
+  type SetupResult =
+    // the content is ready and the toolbar window should be shown
+    | 'shown'
+    // nothing to display, the toolbar window should stay hidden
+    | 'hidden'
+    // a newer show or hide replaced this setup, which must not touch the window
+    | 'stale';
 
   // matched actions to display
   let actions: Action[] = $state([]);
@@ -148,18 +162,6 @@
     return `${highlightGradient}, ${actionGlowGradient}`;
   });
 
-  // toolbar dimmed opacity while a result window is shown
-  let dimOpacityValue = $derived.by(() => {
-    const value = toolbarDimOpacity.current;
-    const opacity = Number.isFinite(value)
-      ? Math.min(TOOLBAR_DIM_OPACITY.max, Math.max(TOOLBAR_DIM_OPACITY.min, Math.trunc(value)))
-      : TOOLBAR_DIM_OPACITY.default;
-    return opacity / 100;
-  });
-
-  // actual toolbar opacity, restored to full while the pointer is inside
-  let contentOpacity = $derived(dimmed && !pointerInside ? dimOpacityValue : 1);
-
   /**
    * Clear the pending toolbar auto-hide timer.
    */
@@ -176,7 +178,7 @@
   function startAutoHideTimer(value = toolbarAutoHideDelay.current) {
     clearAutoHideTimer();
 
-    if (!toolbarAutoHide.current || !autoHideReady || pointerInside || nativeMenuOpen || dimmed) {
+    if (!toolbarAutoHide.current || !autoHideReady || pointerInside || nativeMenuOpen) {
       return;
     }
 
@@ -186,7 +188,7 @@
 
     autoHideTimer = setTimeout(async () => {
       autoHideTimer = null;
-      if (!toolbarAutoHide.current || !autoHideReady || pointerInside || nativeMenuOpen || dimmed) {
+      if (!toolbarAutoHide.current || !autoHideReady || pointerInside || nativeMenuOpen) {
         return;
       }
 
@@ -207,9 +209,8 @@
     const ready = autoHideReady;
     const hovering = pointerInside;
     const menuOpen = nativeMenuOpen;
-    const dimming = dimmed;
 
-    if (!enabled || !ready || hovering || menuOpen || dimming) {
+    if (!enabled || !ready || hovering || menuOpen) {
       clearAutoHideTimer();
       return;
     }
@@ -240,6 +241,49 @@
   const findBuiltinAction = memoize((action: string) =>
     [...DEFAULT_ACTIONS, ...GENERAL_ACTIONS, ...CONVERT_ACTIONS, ...PROCESS_ACTIONS].find((a) => a.value === action)
   );
+
+  // rasterized native menu icons, keyed by icon identity and appearance
+  const menuIconCache = new SvelteMap<string, Promise<Image | undefined>>();
+
+  /**
+   * Cache key of a rasterized menu icon.
+   *
+   * A built-in action icon is a module-level component that never changes, while a custom action
+   * icon is a phosphor name or an uploaded image that identifies itself, so an icon edited in the
+   * settings is rasterized again. The macOS tint follows the system appearance, so a switched
+   * theme needs its own image as well.
+   *
+   * @param action - action whose icon is shown in the menu
+   * @returns cache key
+   */
+  function menuIconCacheKey(action: Action): string {
+    const identity = typeof action.icon === 'string' ? action.icon : action.id;
+    const dark = osType === 'macos' && !!window.matchMedia?.('(prefers-color-scheme: dark)').matches;
+    return `${identity}|${dark ? 'dark' : 'light'}`;
+  }
+
+  /**
+   * Rasterize a menu icon once and reuse it for every later menu opening.
+   *
+   * @param action - action whose icon is shown in the menu
+   * @returns promise resolving to the menu item image, or undefined when it cannot be rendered
+   */
+  function menuIcon(action: Action): Promise<Image | undefined> {
+    const cacheKey = menuIconCacheKey(action);
+    const cached = menuIconCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const pending = iconToImage(action.icon).catch((error) => {
+      console.error(`Failed to rasterize menu icon: ${error}`);
+      // keep a failed icon out of the cache so a later menu can try again
+      menuIconCache.delete(cacheKey);
+      return undefined;
+    });
+    menuIconCache.set(cacheKey, pending);
+    return pending;
+  }
 
   /**
    * Map rule to toolbar action.
@@ -280,39 +324,122 @@
   }
 
   /**
+   * Check whether a toolbar setup is still the newest one.
+   *
+   * @param requestId - id captured when the setup started
+   * @returns false once a newer show or hide replaced the setup
+   */
+  function isSetupCurrent(requestId: number): boolean {
+    return requestId === setupRequestId;
+  }
+
+  /**
+   * Bound a promise with a timeout.
+   *
+   * @param promise - promise to guard
+   * @param timeoutMs - maximum wait time in milliseconds
+   * @returns promise resolving with the original result, or rejecting once the timeout elapses
+   */
+  function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Timed out after ${timeoutMs}ms`)), timeoutMs);
+      promise.then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (error) => {
+          clearTimeout(timer);
+          reject(error);
+        }
+      );
+    });
+  }
+
+  /**
+   * Replace action labels with preview results.
+   *
+   * Previews of one toolbar run in parallel against a single clipboard snapshot, so one slow
+   * script cannot hold up the others. A failed, empty or timed out preview keeps the built-in
+   * label and marks the action to execute normally when it is clicked.
+   *
+   * @param previewActions - actions whose label is replaced by the preview result
+   * @param text - selected text the previews run against
+   * @returns promise resolved after every preview settled
+   */
+  async function applyPreviews(previewActions: Action[], text: string): Promise<void> {
+    if (previewActions.length === 0) {
+      return;
+    }
+
+    const clipboard = await invoke<string>('get_clipboard_text').catch(() => '');
+    const results = await Promise.allSettled(
+      previewActions.map((action) => withTimeout(executePreview(action.rule, text, clipboard), TOOLBAR_PREVIEW_TIMEOUT))
+    );
+
+    results.forEach((result, index) => {
+      const action = previewActions[index];
+      if (result.status === 'fulfilled' && result.value) {
+        action.label = result.value;
+      } else {
+        if (result.status === 'rejected') {
+          console.warn(`Failed to preview action ${action.id}: ${result.reason}`);
+        }
+        // no preview text: keep the built-in label and execute the action when it is clicked
+        action.rule.preview = false;
+      }
+    });
+  }
+
+  /**
    * Setup toolbar with given rules and selection.
    *
+   * Toolbar content is only committed while the setup is still the newest one, so a slow preview
+   * can never overwrite a toolbar that a newer selection or a dismissal already owns.
+   *
    * @param data - toolbar setup data
-   * @returns whether the toolbar window should be shown
+   * @param requestId - id of the show request this setup belongs to
+   * @returns whether the toolbar window should be shown, stay hidden, or was superseded
    */
-  async function setup(data: { rules: Rule[]; selection: string; mouse?: boolean }): Promise<boolean> {
-    menuMode = false;
+  async function setup(
+    data: { rules: Rule[]; selection: string; mouse?: boolean },
+    requestId: number
+  ): Promise<SetupResult> {
+    if (!isSetupCurrent(requestId)) {
+      return 'stale';
+    }
 
     if (!data || !data.rules || !Array.isArray(data.rules)) {
-      return false;
+      return 'hidden';
     }
 
     // map rules to actions
-    actions = data.rules.map(mapToAction).filter((a) => !!a);
-    if (actions.length === 0) {
-      return false;
+    const mappedActions = data.rules.map(mapToAction).filter((a): a is Action => !!a);
+    if (mappedActions.length === 0) {
+      return 'hidden';
     }
 
-    // update current selection
-    selection = data.selection || '';
-
-    // replace label with preview result
-    for (const action of actions) {
-      if (action.rule.preview) {
-        const result = await execute(action.rule, selection);
-        if (result) {
-          action.label = result;
-        } else {
-          // disable preview if execution failed
-          action.rule.preview = false;
-        }
-      }
+    if (!isSetupCurrent(requestId)) {
+      return 'stale';
     }
+
+    const nextSelection = data.selection || '';
+
+    await applyPreviews(
+      mappedActions.filter((action) => action.rule.preview),
+      nextSelection
+    );
+
+    // previews are the slowest step, so a newer selection is most likely to land here
+    if (!isSetupCurrent(requestId)) {
+      return 'stale';
+    }
+
+    // commit the prepared content in one step: a toolbar that is still on screen keeps showing
+    // the previous selection while previews run, instead of blanking out
+    actions = mappedActions;
+    selection = nextSelection;
+    menuMode = false;
 
     // show native menu directly if no visible actions
     if (maxVisibleActions === 0) {
@@ -320,12 +447,16 @@
         menuMode = true;
         initialized = true;
         await resizeToolbar(data.mouse ?? false, true);
-        return true;
+        return isSetupCurrent(requestId) ? 'shown' : 'stale';
       }
 
       await currentWindow.hide();
+      if (!isSetupCurrent(requestId)) {
+        return 'stale';
+      }
+
       await showNativeMenu(actions);
-      return false;
+      return 'hidden';
     }
 
     // mark as initialized
@@ -333,14 +464,14 @@
 
     await resizeToolbar(data.mouse ?? false, true);
 
-    return true;
+    return isSetupCurrent(requestId) ? 'shown' : 'stale';
   }
 
   /**
-   * Resize the toolbar window to fit current content.
+   * Resize the toolbar window to fit current content and place it.
    *
    * @param mouse - whether to position near mouse cursor
-   * @param reposition - whether to reposition the toolbar after resizing
+   * @param reposition - whether to place the toolbar on its anchor instead of keeping it in place
    * @returns a promise resolved after window updates; failures are logged
    */
   async function resizeToolbar(mouse: boolean, reposition: boolean) {
@@ -357,44 +488,31 @@
       } else if (osType !== 'macos') {
         toolbarZoomFactor = window.devicePixelRatio / (await currentWindow.scaleFactor());
       }
-      const width = Math.ceil((container.scrollWidth + 10) * toolbarZoomFactor);
-      const height = Math.ceil((container.scrollHeight + 10) * toolbarZoomFactor);
-      // keep separate IPC calls so native geometry updates can run between stages
-      await currentWindow.setSize(new LogicalSize(width, height));
-      if (reposition) {
-        await invoke('position_toolbar', { mouse });
-      } else if (menuMode) {
-        await clampToolbarToSafeArea();
-      }
+
+      // the container sits inside the transparent padding of the root, so the window has to grow
+      // by it, and the backend needs the vertical inset to keep the gap to the text
+      const rootStyle = root ? getComputedStyle(root) : null;
+      const paddingX = rootStyle ? Math.round(parseFloat(rootStyle.paddingLeft) || 0) : 0;
+      const paddingY = rootStyle ? Math.round(parseFloat(rootStyle.paddingTop) || 0) : 0;
+      const width = Math.ceil((container.scrollWidth + 2 * paddingX + WINDOW_SLACK) * toolbarZoomFactor);
+      const height = Math.ceil((container.scrollHeight + 2 * paddingY + WINDOW_SLACK) * toolbarZoomFactor);
+
+      // size and placement travel together, so the backend places the window with the size it is
+      // about to take instead of the previous size the platform still reports after a resize
+      await invoke('apply_toolbar_geometry', {
+        geometry: {
+          width,
+          height,
+          inset: paddingY * toolbarZoomFactor,
+          mouse,
+          reposition,
+          menuMode,
+          ...toolbarPlacement()
+        }
+      });
     } catch (error) {
       console.error(`Failed to resize window: ${error}`);
     }
-  }
-
-  /**
-   * Keep the resized HTML menu inside the current monitor safe area.
-   */
-  async function clampToolbarToSafeArea() {
-    const monitor = await currentMonitor();
-    if (!monitor) {
-      return;
-    }
-
-    const scaleFactor = await currentWindow.scaleFactor();
-    const windowPosition = (await currentWindow.outerPosition()).toLogical(scaleFactor);
-    const windowSize = (await currentWindow.outerSize()).toLogical(scaleFactor);
-    const screenPosition = monitor.position.toLogical(scaleFactor);
-    const screenSize = monitor.size.toLogical(scaleFactor);
-    const safeAreaBottom = SAFE_AREA_BOTTOM / scaleFactor;
-
-    const minX = screenPosition.x;
-    const maxX = Math.max(minX, screenPosition.x + screenSize.width - windowSize.width);
-    const minY = screenPosition.y;
-    const maxY = Math.max(minY, screenPosition.y + screenSize.height - windowSize.height - safeAreaBottom);
-    const x = Math.min(maxX, Math.max(minX, windowPosition.x));
-    const y = Math.min(maxY, Math.max(minY, windowPosition.y));
-
-    await currentWindow.setPosition(new LogicalPosition(x, y));
   }
 
   /**
@@ -416,7 +534,7 @@
             return await IconMenuItem.new({
               id: action.id,
               text: action.label,
-              icon: await iconToImage(action.icon),
+              icon: await menuIcon(action),
               action: () => executeAction(action)
             });
           })
@@ -579,14 +697,28 @@
    * Get current window placement information.
    */
   async function windowPlacement(): Promise<WindowPlacement> {
-    const outerPosition = await currentWindow.outerPosition();
-    const scaleFactor = await currentWindow.scaleFactor();
-    const monitor = await currentMonitor();
+    const [outerPosition, scaleFactor, monitor] = await Promise.all([
+      currentWindow.outerPosition(),
+      currentWindow.scaleFactor(),
+      currentMonitor()
+    ]);
+
     return {
       screenSize: monitor?.size.toLogical(scaleFactor),
       screenPosition: monitor?.position.toLogical(scaleFactor),
       windowPosition: outerPosition.toLogical(scaleFactor)
     };
+  }
+
+  /**
+   * Check whether the toolbar stays visible after an action.
+   *
+   * @param action - toolbar action that was clicked
+   * @returns true when the action is the one picked to keep the toolbar on screen
+   */
+  function keepsToolbar(action: Action): boolean {
+    const keepAction = toolbarAlwaysDisplayAction.current;
+    return !!keepAction && keepAction === action.id;
   }
 
   /**
@@ -600,12 +732,20 @@
     const selectedText = selection;
     try {
       const isCurrent = createExecutionGuard();
+      // pause the auto-hide countdown while the action runs; it stays paused afterwards so a kept
+      // toolbar remains on screen until the user scrolls the wheel or clicks away
       autoHideReady = false;
       clearAutoHideTimer();
 
       // get current window placement
       const placement = await windowPlacement();
       if (!isCurrent() || requestId !== selectionRequestId) return;
+
+      // the toolbar is only kept for the action picked by the user
+      const keepToolbar = keepsToolbar(action);
+      if (!keepToolbar) {
+        await currentWindow.hide();
+      }
 
       if (action.rule.preview) {
         if (action.rule.outputMode === 'replace') {
@@ -615,14 +755,16 @@
             clipboard: action.rule.clipboard
           });
         } else if (action.rule.outputMode === 'popup') {
-          // show popup with preview text
+          // show popup with preview text, remembering the position per action
           await invoke('show_popup_sameplace', {
             payload: JSON.stringify({
               id: crypto.randomUUID(),
               result: action.label,
-              copyOnPopup: action.rule.clipboard
+              copyOnPopup: action.rule.clipboard,
+              positionKey: action.id
             }),
-            placement: placement
+            placement: placement,
+            memoryPosition: popupRememberPosition.current ? (popupPositions.current[action.id] ?? null) : null
           });
         } else if (action.rule.outputMode === undefined && action.rule.clipboard) {
           // copy preview text to clipboard
@@ -631,12 +773,6 @@
       } else {
         // execute the action normally
         await execute(action.rule, selectedText, placement, () => isCurrent() && requestId === selectionRequestId);
-      }
-
-      // keep the toolbar visible after the action and resume the auto-hide countdown
-      if (isCurrent() && requestId === selectionRequestId) {
-        autoHideReady = true;
-        startAutoHideTimer();
       }
     } catch (error) {
       console.error(`Failed to execute action: ${error}`);
@@ -651,45 +787,46 @@
   // Invalidate pending prompt detection when a new toolbar selection arrives.
   let selectionRequestId = 0;
 
+  // Generation of the toolbar setup, bumped by every show and hide so that a superseded setup
+  // stops writing state and never resurrects a toolbar the user already dismissed.
+  let setupRequestId = 0;
+
   onMount(() => {
     // listen to window show/hide events
     const unlistenWindowShow = listen<string>('show-toolbar', (event) => {
       selectionRequestId += 1;
+      setupRequestId += 1;
       autoHideReady = false;
       pointerInside = false;
-      dimmed = false;
       clearAutoHideTimer();
-      initialized = false;
-      setup(JSON.parse(event.payload))
-        .then(async (showToolbar) => {
-          if (!showToolbar) {
+      const requestId = setupRequestId;
+      setup(JSON.parse(event.payload), requestId)
+        .then(async (result) => {
+          // a newer selection or a dismissal owns the window now, leave it untouched
+          if (!isSetupCurrent(requestId)) {
+            return;
+          }
+          if (result === 'hidden') {
             await currentWindow.hide();
             return;
           }
           // still try showing after a resize/position failure, using the existing placement
           await invoke('show_toolbar_regardless', { onlyIfHidden: true });
-          autoHideReady = true;
+          if (isSetupCurrent(requestId)) {
+            autoHideReady = true;
+          }
         })
         .catch((error) => {
           console.error(`Failed to show toolbar: ${error}`);
         });
     });
     const unlistenWindowHide = listen('hide-toolbar', () => {
+      setupRequestId += 1;
       autoHideReady = false;
       pointerInside = false;
-      dimmed = false;
       clearAutoHideTimer();
       initialized = false;
       menuMode = false;
-    });
-
-    // dim the toolbar while a result window is shown
-    const unlistenPopupShow = listen('show-popup', () => {
-      dimmed = true;
-      clearAutoHideTimer();
-    });
-    const unlistenPopupHide = listen('hide-popup', () => {
-      dimmed = false;
     });
 
     // listen to mouse enter/exit events
@@ -706,8 +843,6 @@
       clearAutoHideTimer();
       unlistenWindowShow.then((fn) => fn());
       unlistenWindowHide.then((fn) => fn());
-      unlistenPopupShow.then((fn) => fn());
-      unlistenPopupHide.then((fn) => fn());
       unlistenMouseExited.then((fn) => fn());
       unlistenMouseEntered.then((fn) => fn());
     };
@@ -716,6 +851,7 @@
 
 <main
   class="bg-transparent p-1 select-none"
+  bind:this={root}
   onpointerenter={() => (pointerInside = true)}
   onpointerleave={() => (pointerInside = false)}
 >
@@ -725,11 +861,7 @@
       style:border-radius={cornerRadiusStyle}
       in:fly={{ y: -6, duration: 100 }}
     >
-      <div
-        class="w-52 bg-base-200/95 py-1 backdrop-blur-sm transition-opacity duration-200"
-        style:opacity={contentOpacity}
-        bind:this={container}
-      >
+      <div class="w-52 bg-base-200/95 py-1 backdrop-blur-sm" bind:this={container}>
         {#each actions as action (action.id)}
           <button
             class="flex h-8 w-full cursor-pointer items-center gap-2 px-2 text-left transition-colors"
@@ -754,12 +886,7 @@
       style:border-radius={cornerRadiusStyle}
       in:fly={{ y: -10, duration: 100 }}
     >
-      <div
-        class="flex h-8 w-max min-w-max transition-opacity duration-200"
-        style:background-color={toolbarBackgroundStyle}
-        style:opacity={contentOpacity}
-        bind:this={container}
-      >
+      <div class="flex h-8 w-max min-w-max" style:background-color={toolbarBackgroundStyle} bind:this={container}>
         <span
           class="flex shrink-0 cursor-grab items-center opacity-20 transition-opacity active:cursor-grabbing"
           class:hover:opacity-90={hoverEnabled}

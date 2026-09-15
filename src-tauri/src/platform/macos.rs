@@ -449,11 +449,22 @@ pub fn get_selection() -> Result<String, AppError> {
     Ok(String::new())
 }
 
-/// Get the coordinates of the bottom-right corner of the selected text.
-pub fn get_cursor_location() -> Result<(i32, i32), AppError> {
+/// Bounding rectangle of the last character in the selected text.
+///
+/// Returns `(left, top, right, bottom)` in logical screen points.
+pub fn get_selection_rect() -> Result<(i32, i32, i32, i32), AppError> {
     unsafe {
-        // get focused element
-        let focused_element = get_focused_element()?;
+        // get focused element, if failed, try to enable AXAPI for special apps and retry
+        let focused_element = match get_focused_element() {
+            Ok(element) => element,
+            Err(_) => {
+                // try to enable AXAPI for special applications
+                // inspired by https://github.com/0xfullex/selection-hook
+                let _ = enable_axapi_for_special_apps();
+                // retry getting focused element
+                get_focused_element()?
+            }
+        };
 
         // get selected text range
         let selected_range = get_selected_range(&focused_element)?;
@@ -518,11 +529,13 @@ pub fn get_cursor_location() -> Result<(i32, i32), AppError> {
             return Err("Invalid bounds coordinates".into());
         }
 
-        // calculate bottom-right corner coordinates
-        let bottom_right_x = (rect.origin.x + rect.size.width) as i32;
-        let bottom_right_y = (rect.origin.y + rect.size.height) as i32;
+        // calculate rectangle bounds
+        let left = rect.origin.x as i32;
+        let top = rect.origin.y as i32;
+        let right = (rect.origin.x + rect.size.width) as i32;
+        let bottom = (rect.origin.y + rect.size.height) as i32;
 
-        Ok((bottom_right_x, bottom_right_y))
+        Ok((left, top, right, bottom))
     }
 }
 

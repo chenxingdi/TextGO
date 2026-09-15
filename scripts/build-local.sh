@@ -20,7 +20,13 @@ set -euo pipefail
 export RUSTUP_HOME="${RUSTUP_HOME:-E:/rustup}"
 export CARGO_HOME="${CARGO_HOME:-E:/cargo}"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-E:/textgo-target}"
-export PATH="$CARGO_HOME/bin:$PATH"
+
+# git-bash 不会解析 PATH 里的 Windows 风格路径，需要转成 POSIX 形式
+cargo_bin="$CARGO_HOME/bin"
+if command -v cygpath >/dev/null 2>&1; then
+  cargo_bin="$(cygpath -u "$cargo_bin")"
+fi
+export PATH="$cargo_bin:$PATH"
 
 # updater 签名密钥与密码
 key_file="${TAURI_SIGNING_KEY_FILE:-${USERPROFILE:-$HOME}/.tauri/textgo.key}"

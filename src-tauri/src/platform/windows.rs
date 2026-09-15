@@ -185,8 +185,11 @@ pub fn get_selection() -> Result<String, AppError> {
     }
 }
 
-/// Get the coordinates of the bottom-right corner of the selected text.
-pub fn get_cursor_location() -> Result<(i32, i32), AppError> {
+/// Bounding rectangle of the last character in the selected text.
+///
+/// Returns `(left, top, right, bottom)` in physical screen pixels, matching the raw
+/// coordinate space used before any monitor scale conversion.
+pub fn get_selection_rect() -> Result<(i32, i32, i32, i32), AppError> {
     unsafe {
         // initialize COM
         let _com = ComGuard::new()?;
@@ -229,7 +232,7 @@ pub fn get_cursor_location() -> Result<(i32, i32), AppError> {
             return Err("No bounding rectangles found".into());
         }
 
-        // find last valid rectangle and calculate coordinates
+        // find the last valid rectangle, which is the bottom-most line of the selection
         let mut result = Err("No valid rectangle found".into());
         for i in (0..rect_count).rev() {
             let rect_index = i * 4;
@@ -247,10 +250,12 @@ pub fn get_cursor_location() -> Result<(i32, i32), AppError> {
                 && left < MAX_VALID_COORDINATE
                 && top < MAX_VALID_COORDINATE
             {
-                // calculate bottom-right corner coordinates
-                let bottom_right_x = (left + width) as i32;
-                let bottom_right_y = (top + height) as i32;
-                result = Ok((bottom_right_x, bottom_right_y));
+                result = Ok((
+                    left as i32,
+                    top as i32,
+                    (left + width) as i32,
+                    (top + height) as i32,
+                ));
                 break;
             }
         }

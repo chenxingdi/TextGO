@@ -21,6 +21,14 @@ export type WindowSize = {
 };
 
 /**
+ * Remembered window position in logical pixels.
+ */
+export type PopupPosition = {
+  x: number;
+  y: number;
+};
+
+/**
  * Convert all properties in type T to nullable.
  */
 export type Optional<T> = {
@@ -163,6 +171,8 @@ export type Entry = {
   actionType?: ActionType;
   /** Action label. */
   actionLabel?: string;
+  /** Key used to remember this popup position. */
+  positionKey?: string;
   /** Execution result (script return value / prompt content). */
   result?: string;
   /** Whether to copy result to clipboard on popup. */

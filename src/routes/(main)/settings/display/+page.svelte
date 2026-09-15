@@ -7,25 +7,36 @@
     POPUP_CORNER_RADIUS,
     POPUP_FONT_SIZE,
     POPUP_OPACITY,
+    PROMPT_MARK,
+    SCRIPT_MARK,
     TOOLBAR_ACTION_COUNT,
+    TOOLBAR_ANCHOR_PERCENT,
     TOOLBAR_AUTO_HIDE_DELAY,
     TOOLBAR_CORNER_RADIUS,
-    TOOLBAR_DIM_OPACITY,
-    TOOLBAR_OPACITY
+    TOOLBAR_LINE_OFFSET,
+    TOOLBAR_OPACITY,
+    TOOLBAR_TEXT_GAP
   } from '$lib/constants';
+  import { CONVERT_ACTIONS, GENERAL_ACTIONS, PROCESS_ACTIONS } from '$lib/executor';
   import { m } from '$lib/paraglide/messages';
   import {
     popupCornerRadius,
     popupFontSize,
     popupOpacity,
+    popupRememberPosition,
+    prompts,
+    scripts,
+    toolbarAlwaysDisplayAction,
+    toolbarAnchorPercent,
     toolbarAutoHide,
     toolbarAutoHideDelay,
     toolbarCornerRadius,
-    toolbarDimOpacity,
-    toolbarHideOnScroll,
+    toolbarLineOffset,
     toolbarMaxActions,
-    toolbarOpacity
+    toolbarOpacity,
+    toolbarTextGap
   } from '$lib/stores.svelte';
+  import type { Option } from '$lib/types';
   import AppWindowIcon from 'phosphor-svelte/lib/AppWindowIcon';
   import DeviceMobileSpeakerIcon from 'phosphor-svelte/lib/DeviceMobileSpeakerIcon';
 
@@ -44,12 +55,42 @@
 
   const toolbarCornerRadiusMarks = createRangeMarks(TOOLBAR_CORNER_RADIUS, 4);
   const toolbarOpacityMarks = createRangeMarks(TOOLBAR_OPACITY, 3);
-  const toolbarDimOpacityMarks = createRangeMarks(TOOLBAR_DIM_OPACITY, 3);
   const toolbarAutoHideDelayMarks = createRangeMarks(TOOLBAR_AUTO_HIDE_DELAY, 4);
+  const toolbarTextGapMarks = createRangeMarks(TOOLBAR_TEXT_GAP, 3);
+  const toolbarAnchorPercentMarks = createRangeMarks(TOOLBAR_ANCHOR_PERCENT, 3);
+  const toolbarLineOffsetMarks = createRangeMarks(TOOLBAR_LINE_OFFSET, 3);
 
   const popupCornerRadiusMarks = createRangeMarks(POPUP_CORNER_RADIUS, 4);
   const popupOpacityMarks = createRangeMarks(POPUP_OPACITY, 3);
   const popupFontSizeMarks = createRangeMarks(POPUP_FONT_SIZE, 4);
+
+  // actions that may keep the toolbar on screen, grouped by action type
+  let alwaysDisplayOptions = $derived.by(() => {
+    const options: Option[] = [{ value: '', label: m.toolbar_always_display_none() }];
+
+    if (prompts.current.length > 0) {
+      options.push({ value: '--prompt--', label: `-- ${m.ai()} --`, disabled: true });
+      for (const prompt of prompts.current) {
+        options.push({ value: PROMPT_MARK + prompt.id, label: prompt.id });
+      }
+    }
+
+    if (scripts.current.length > 0) {
+      options.push({ value: '--script--', label: `-- ${m.script()} --`, disabled: true });
+      for (const script of scripts.current) {
+        options.push({ value: SCRIPT_MARK + script.id, label: script.id });
+      }
+    }
+
+    options.push({ value: '--general--', label: `-- ${m.general()} --`, disabled: true });
+    options.push(...GENERAL_ACTIONS);
+    options.push({ value: '--convert--', label: `-- ${m.text_case_convert()} --`, disabled: true });
+    options.push(...CONVERT_ACTIONS);
+    options.push({ value: '--process--', label: `-- ${m.text_processing()} --`, disabled: true });
+    options.push(...PROCESS_ACTIONS);
+
+    return options;
+  });
 </script>
 
 <div class="flex flex-col gap-2">
@@ -60,8 +101,10 @@
     </fieldset>
     <div class="divider my-0 opacity-60"></div>
     <fieldset class="flex items-center justify-between gap-1">
-      <Label tip={m.toolbar_corner_radius_explain()} tipPlacement="duplex">{m.toolbar_corner_radius()}</Label>
-      <label class="flex max-w-2/5 grow flex-col gap-2 pt-2">
+      <Label class="min-w-0 flex-1" tip={m.toolbar_corner_radius_explain()} tipPlacement="duplex">
+        {m.toolbar_corner_radius()}
+      </Label>
+      <label class="flex w-2/5 shrink-0 flex-col gap-2 pt-2">
         <input
           class="range w-full text-emphasis range-xs"
           type="range"
@@ -79,8 +122,10 @@
     </fieldset>
     <div class="divider my-0 opacity-60"></div>
     <fieldset class="flex items-center justify-between gap-1">
-      <Label tip={m.toolbar_opacity_explain()} tipPlacement="duplex">{m.toolbar_opacity()}</Label>
-      <label class="flex max-w-2/5 grow flex-col gap-2 pt-2">
+      <Label class="min-w-0 flex-1" tip={m.toolbar_opacity_explain()} tipPlacement="duplex">
+        {m.toolbar_opacity()}
+      </Label>
+      <label class="flex w-2/5 shrink-0 flex-col gap-2 pt-2">
         <input
           class="range w-full text-emphasis range-xs"
           type="range"
@@ -98,32 +143,13 @@
     </fieldset>
     <div class="divider my-0 opacity-60"></div>
     <fieldset class="flex items-center justify-between gap-1">
-      <Label tip={m.toolbar_dim_opacity_explain()} tipPlacement="duplex">{m.toolbar_dim_opacity()}</Label>
-      <label class="flex max-w-2/5 grow flex-col gap-2 pt-2">
-        <input
-          class="range w-full text-emphasis range-xs"
-          type="range"
-          min={TOOLBAR_DIM_OPACITY.min}
-          max={TOOLBAR_DIM_OPACITY.max}
-          step={TOOLBAR_DIM_OPACITY.step}
-          bind:value={toolbarDimOpacity.current}
-        />
-        <div class="flex justify-between text-xs opacity-70">
-          {#each toolbarDimOpacityMarks as opacity (opacity)}
-            <span>{opacity}%</span>
-          {/each}
-        </div>
-      </label>
-    </fieldset>
-    <div class="divider my-0 opacity-60"></div>
-    <fieldset class="flex items-center justify-between gap-1">
       <Label tip={m.toolbar_auto_hide_explain()} tipPlacement="duplex">{m.toolbar_auto_hide()}</Label>
       <Toggle bind:value={toolbarAutoHide.current} />
     </fieldset>
     <div class="divider my-0 opacity-60"></div>
     <fieldset class="flex items-center justify-between gap-1">
-      <Label>{m.toolbar_auto_hide_delay()}</Label>
-      <label class="flex max-w-2/5 grow flex-col gap-2 pt-2" class:opacity-50={!toolbarAutoHide.current}>
+      <Label class="min-w-0 flex-1">{m.toolbar_auto_hide_delay()}</Label>
+      <label class="flex w-2/5 shrink-0 flex-col gap-2 pt-2" class:opacity-50={!toolbarAutoHide.current}>
         <input
           class="range w-full text-emphasis range-xs"
           type="range"
@@ -142,14 +168,83 @@
     </fieldset>
     <div class="divider my-0 opacity-60"></div>
     <fieldset class="flex items-center justify-between gap-1">
-      <Label tip={m.toolbar_hide_on_scroll_explain()} tipPlacement="duplex">{m.toolbar_hide_on_scroll()}</Label>
-      <Toggle bind:value={toolbarHideOnScroll.current} />
+      <Label class="min-w-0 flex-1" tip={m.toolbar_text_gap_explain()} tipPlacement="duplex">
+        {m.toolbar_text_gap()}
+      </Label>
+      <label class="flex w-2/5 shrink-0 flex-col gap-2 pt-2">
+        <input
+          class="range w-full text-emphasis range-xs"
+          type="range"
+          min={TOOLBAR_TEXT_GAP.min}
+          max={TOOLBAR_TEXT_GAP.max}
+          step={TOOLBAR_TEXT_GAP.step}
+          bind:value={toolbarTextGap.current}
+        />
+        <div class="flex justify-between text-xs opacity-70">
+          {#each toolbarTextGapMarks as gap (gap)}
+            <span>{gap}px</span>
+          {/each}
+        </div>
+      </label>
+    </fieldset>
+    <div class="divider my-0 opacity-60"></div>
+    <fieldset class="flex items-center justify-between gap-1">
+      <Label class="min-w-0 flex-1" tip={m.toolbar_anchor_percent_explain()} tipPlacement="duplex">
+        {m.toolbar_anchor_percent()}
+      </Label>
+      <label class="flex w-2/5 shrink-0 flex-col gap-2 pt-2">
+        <input
+          class="range w-full text-emphasis range-xs"
+          type="range"
+          min={TOOLBAR_ANCHOR_PERCENT.min}
+          max={TOOLBAR_ANCHOR_PERCENT.max}
+          step={TOOLBAR_ANCHOR_PERCENT.step}
+          bind:value={toolbarAnchorPercent.current}
+        />
+        <div class="flex justify-between text-xs opacity-70">
+          {#each toolbarAnchorPercentMarks as percent (percent)}
+            <span>{percent}%</span>
+          {/each}
+        </div>
+      </label>
+    </fieldset>
+    <div class="divider my-0 opacity-60"></div>
+    <fieldset class="flex items-center justify-between gap-1">
+      <Label class="min-w-0 flex-1" tip={m.toolbar_line_offset_explain()} tipPlacement="duplex">
+        {m.toolbar_line_offset()}
+      </Label>
+      <label class="flex w-2/5 shrink-0 flex-col gap-2 pt-2">
+        <input
+          class="range w-full text-emphasis range-xs"
+          type="range"
+          min={TOOLBAR_LINE_OFFSET.min}
+          max={TOOLBAR_LINE_OFFSET.max}
+          step={TOOLBAR_LINE_OFFSET.step}
+          bind:value={toolbarLineOffset.current}
+        />
+        <div class="flex justify-between text-xs opacity-70">
+          {#each toolbarLineOffsetMarks as offset (offset)}
+            <span>{offset}px</span>
+          {/each}
+        </div>
+      </label>
+    </fieldset>
+    <div class="divider my-0 opacity-60"></div>
+    <fieldset class="flex items-center justify-between gap-1">
+      <Label tip={m.toolbar_always_display_explain()} tipPlacement="duplex">{m.toolbar_always_display()}</Label>
+      <Select
+        options={alwaysDisplayOptions}
+        bind:value={toolbarAlwaysDisplayAction.current}
+        class="max-w-3/5 select-sm"
+      />
     </fieldset>
   </Setting>
   <Setting icon={AppWindowIcon} title={m.popup_settings()}>
     <fieldset class="flex items-center justify-between gap-1">
-      <Label tip={m.popup_corner_radius_explain()} tipPlacement="duplex">{m.popup_corner_radius()}</Label>
-      <label class="flex max-w-2/5 grow flex-col gap-2 pt-2">
+      <Label class="min-w-0 flex-1" tip={m.popup_corner_radius_explain()} tipPlacement="duplex">
+        {m.popup_corner_radius()}
+      </Label>
+      <label class="flex w-2/5 shrink-0 flex-col gap-2 pt-2">
         <input
           class="range w-full text-emphasis range-xs"
           type="range"
@@ -167,8 +262,10 @@
     </fieldset>
     <div class="divider my-0 opacity-60"></div>
     <fieldset class="flex items-center justify-between gap-1">
-      <Label tip={m.popup_opacity_explain()} tipPlacement="duplex">{m.popup_opacity()}</Label>
-      <label class="flex max-w-2/5 grow flex-col gap-2 pt-2">
+      <Label class="min-w-0 flex-1" tip={m.popup_opacity_explain()} tipPlacement="duplex">
+        {m.popup_opacity()}
+      </Label>
+      <label class="flex w-2/5 shrink-0 flex-col gap-2 pt-2">
         <input
           class="range w-full text-emphasis range-xs"
           type="range"
@@ -186,8 +283,10 @@
     </fieldset>
     <div class="divider my-0 opacity-60"></div>
     <fieldset class="flex items-center justify-between gap-1">
-      <Label tip={m.popup_font_size_explain()} tipPlacement="duplex">{m.popup_font_size()}</Label>
-      <label class="flex max-w-2/5 grow flex-col gap-2 pt-2">
+      <Label class="min-w-0 flex-1" tip={m.popup_font_size_explain()} tipPlacement="duplex">
+        {m.popup_font_size()}
+      </Label>
+      <label class="flex w-2/5 shrink-0 flex-col gap-2 pt-2">
         <input
           class="range w-full text-emphasis range-xs"
           type="range"
@@ -202,6 +301,11 @@
           {/each}
         </div>
       </label>
+    </fieldset>
+    <div class="divider my-0 opacity-60"></div>
+    <fieldset class="flex items-center justify-between gap-1">
+      <Label tip={m.popup_remember_position_explain()} tipPlacement="duplex">{m.popup_remember_position()}</Label>
+      <Toggle bind:value={popupRememberPosition.current} />
     </fieldset>
   </Setting>
 </div>

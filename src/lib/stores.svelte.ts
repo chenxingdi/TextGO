@@ -4,16 +4,19 @@ import {
   POPUP_FONT_SIZE,
   POPUP_OPACITY,
   TOOLBAR_ACTION_COUNT,
+  TOOLBAR_ANCHOR_PERCENT,
   TOOLBAR_AUTO_HIDE_DELAY,
   TOOLBAR_CORNER_RADIUS,
-  TOOLBAR_DIM_OPACITY,
-  TOOLBAR_OPACITY
+  TOOLBAR_LINE_OFFSET,
+  TOOLBAR_OPACITY,
+  TOOLBAR_TEXT_GAP
 } from '$lib/constants';
 import { isSystemTheme, type Theme, type ThemeSetting } from '$lib/theme';
 import type {
   CustomLLMProvider,
   Entry,
   Model,
+  PopupPosition,
   Prompt,
   Regexp,
   Script,
@@ -242,21 +245,37 @@ export const toolbarCornerRadius = persisted<number>('toolbarCornerRadius', TOOL
 // toolbar background opacity percentage
 export const toolbarOpacity = persisted<number>('toolbarOpacity', TOOLBAR_OPACITY.default);
 
-// toolbar opacity percentage while a result window is shown
-export const toolbarDimOpacity = persisted<number>('toolbarDimOpacity', TOOLBAR_DIM_OPACITY.default);
+// vertical distance in pixels between the toolbar and the text line
+export const toolbarTextGap = persisted<number>('toolbarTextGap', TOOLBAR_TEXT_GAP.default);
+
+// position of the text end across the toolbar width, in percent
+export const toolbarAnchorPercent = persisted<number>('toolbarAnchorPercent', TOOLBAR_ANCHOR_PERCENT.default);
+
+// estimated distance from the cursor down to the bottom of its text line, in pixels
+export const toolbarLineOffset = persisted<number>('toolbarLineOffset', TOOLBAR_LINE_OFFSET.default);
+
+/**
+ * Placement values passed to the toolbar positioning commands.
+ *
+ * @returns gap in pixels between the toolbar and the text, the text end position across the
+ * toolbar width in percent, and the estimated cursor to line bottom distance in pixels
+ */
+export function toolbarPlacement() {
+  return {
+    gap: toolbarTextGap.current,
+    anchorPercent: toolbarAnchorPercent.current,
+    lineOffset: toolbarLineOffset.current
+  };
+}
+
+// action that keeps the toolbar on screen after being clicked
+export const toolbarAlwaysDisplayAction = persisted<string>('toolbarAlwaysDisplayAction', '');
 
 // whether to hide the toolbar automatically after inactivity
 export const toolbarAutoHide = persisted<boolean>('toolbarAutoHide', false);
 
 // toolbar auto-hide delay in seconds
 export const toolbarAutoHideDelay = persisted<number>('toolbarAutoHideDelay', TOOLBAR_AUTO_HIDE_DELAY.default);
-
-// whether mouse wheel scrolling hides the toolbar
-export const toolbarHideOnScroll = persisted<boolean>('toolbarHideOnScroll', true, {
-  onchange: (enabled) => {
-    invoke('set_toolbar_hide_on_scroll', { enabled });
-  }
-});
 
 // popup corner radius in pixels
 export const popupCornerRadius = persisted<number>('popupCornerRadius', POPUP_CORNER_RADIUS.default);
@@ -272,6 +291,12 @@ export const popupPinned = persisted<boolean>('popupPinned', false);
 
 // remember the popup window size across app restarts
 export const popupWindowSize = persisted<WindowSize>('popupWindowSize', DEFAULT_POPUP_WINDOW_SIZE);
+
+// remembered popup window position per action, in logical pixels
+export const popupPositions = persisted<Record<string, PopupPosition>>('popupPositions', {});
+
+// whether each popup reopens at the position it was last dragged to
+export const popupRememberPosition = persisted<boolean>('popupRememberPosition', true);
 
 // number of history records to retain
 export const historySize = persisted<number>('historySize', 5);

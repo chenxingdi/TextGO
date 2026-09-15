@@ -1,7 +1,7 @@
 use crate::error::AppError;
 use crate::{
     IBEAM_CURSOR, LONG_PRESS, LONG_PRESS_DURATION, REGISTERED_SHORTCUTS, SHORTCUT_PAUSED,
-    SHORTCUT_SUSPEND, TOOLBAR_HIDE_ON_SCROLL,
+    SHORTCUT_SUSPEND,
 };
 use std::sync::atomic::Ordering;
 use tauri::AppHandle;
@@ -175,13 +175,6 @@ pub fn set_long_press_duration(duration: u64) -> Result<(), AppError> {
 #[tauri::command]
 pub fn set_ibeam_cursor_enabled(enabled: bool) -> Result<(), AppError> {
     IBEAM_CURSOR.store(enabled, Ordering::Relaxed);
-    Ok(())
-}
-
-/// Set whether mouse wheel scrolling hides the toolbar.
-#[tauri::command]
-pub fn set_toolbar_hide_on_scroll(enabled: bool) -> Result<(), AppError> {
-    TOOLBAR_HIDE_ON_SCROLL.store(enabled, Ordering::Relaxed);
     Ok(())
 }
 

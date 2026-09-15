@@ -88,14 +88,46 @@ export const TOOLBAR_OPACITY = {
 };
 
 /**
- * Toolbar dimmed opacity percentage while a result window is shown.
+ * Vertical distance in pixels between the toolbar and the text line.
  */
-export const TOOLBAR_DIM_OPACITY = {
-  min: 10,
-  default: 45,
+export const TOOLBAR_TEXT_GAP = {
+  min: 0,
+  default: 4,
+  max: 40,
+  step: 1
+};
+
+/**
+ * Position of the text end across the toolbar width, in percent.
+ *
+ * 0 puts the toolbar left edge on the text end, 50 centers it, 100 puts its right edge there.
+ */
+export const TOOLBAR_ANCHOR_PERCENT = {
+  min: 0,
+  default: 25,
   max: 100,
   step: 5
 };
+
+/**
+ * Estimated distance from the cursor down to the bottom of its text line, in pixels.
+ *
+ * Only used for applications that expose no selection geometry, such as GoldenDict.
+ */
+export const TOOLBAR_LINE_OFFSET = {
+  min: 0,
+  default: 14,
+  max: 40,
+  step: 1
+};
+
+/**
+ * Maximum time in milliseconds a label preview may take.
+ *
+ * A slower preview is abandoned and the toolbar falls back to the built-in action label, so a
+ * stuck script can never keep the toolbar off screen.
+ */
+export const TOOLBAR_PREVIEW_TIMEOUT = 5000;
 
 /**
  * Popup corner radius in pixels.

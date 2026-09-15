@@ -221,6 +221,7 @@
   import Icon from '$lib/components/Icon.svelte';
   import Select from '$lib/components/Select.svelte';
   import { renderTranslationPrompt } from '$lib/executor';
+  import { popupPositionKey } from '$lib/helpers';
   import { NATURAL_CASES } from '$lib/matcher';
   import { m } from '$lib/paraglide/messages';
   import {
@@ -228,6 +229,8 @@
     popupFontSize,
     popupOpacity,
     popupPinned,
+    popupPositions,
+    popupRememberPosition,
     popupWindowSize,
     prompts
   } from '$lib/stores.svelte';
@@ -256,6 +259,13 @@
   const currentWindow = getCurrentWindow();
   const autoScrollController = createAutoScrollController(requestAnimationFrame, cancelAnimationFrame);
   let canPersistWindowSize = false;
+  // the backend positions the window before showing it, so moves while hidden or right
+  // after a show must not be remembered as a user drag
+  let canPersistPosition = false;
+  let positionReadyTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // key of the popup currently shown, used to look up and remember its position
+  let positionKey = $state('default');
 
   // popup corner radius style
   let cornerRadiusStyle = $derived.by(() => {
@@ -359,6 +369,16 @@
       return;
     }
     popupWindowSize.current = normalizePopupWindowSize(size);
+  }, 200);
+
+  /**
+   * Remember the popup position after a user drag settles.
+   */
+  const savePopupPosition = debounce((position: { x: number; y: number }) => {
+    if (!canPersistPosition || !popupRememberPosition.current) {
+      return;
+    }
+    popupPositions.current = { ...popupPositions.current, [positionKey]: position };
   }, 200);
 
   /**
@@ -695,6 +715,47 @@
   });
 
   onMount(() => {
+    let mounted = true;
+    let unlistenMove: (() => void) | undefined;
+
+    void (async () => {
+      try {
+        const unlisten = await currentWindow.onMoved(({ payload }) => {
+          if (!mounted || !canPersistPosition) {
+            return;
+          }
+          void currentWindow
+            .scaleFactor()
+            .then((scaleFactor) => {
+              savePopupPosition({ x: payload.x / scaleFactor, y: payload.y / scaleFactor });
+            })
+            .catch((error) => {
+              console.error(`Failed to persist popup window position: ${error}`);
+            });
+        });
+        // the async listener registration may resolve after the component has already unmounted
+        if (!mounted) {
+          unlisten();
+          return;
+        }
+        unlistenMove = unlisten;
+      } catch (error) {
+        console.error(`Failed to listen for popup window move: ${error}`);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+      savePopupPosition.cancel();
+      unlistenMove?.();
+      if (positionReadyTimer) {
+        clearTimeout(positionReadyTimer);
+        positionReadyTimer = null;
+      }
+    };
+  });
+
+  onMount(() => {
     const setup = (data: Entry | null) => {
       abort();
       entry = data;
@@ -712,7 +773,19 @@
 
     // listen to window show/hide events
     const unlistenWindowShow = listen<string>('show-popup', (event) => {
-      setup(JSON.parse(event.payload) as Entry);
+      // the window is positioned by the backend before this event, ignore that move
+      canPersistPosition = false;
+      if (positionReadyTimer) {
+        clearTimeout(positionReadyTimer);
+      }
+      positionReadyTimer = setTimeout(() => {
+        positionReadyTimer = null;
+        canPersistPosition = true;
+      }, 600);
+
+      const data = JSON.parse(event.payload) as Entry;
+      positionKey = popupPositionKey(data);
+      setup(data);
       // start chat if in prompt mode
       if (entry?.actionType === 'prompt') {
         chat();
@@ -736,6 +809,12 @@
       });
     });
     const unlistenWindowHide = listen('hide-popup', () => {
+      // the next show repositions the window first, do not remember that move
+      canPersistPosition = false;
+      if (positionReadyTimer) {
+        clearTimeout(positionReadyTimer);
+        positionReadyTimer = null;
+      }
       setup(null);
     });
 
