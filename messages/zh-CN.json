@@ -208,7 +208,7 @@
   "toolbar_text_gap": "垂直间距",
   "toolbar_text_gap_explain": "工具栏与选中文字之间的垂直距离，单位为像素",
   "toolbar_anchor_percent": "水平位置",
-  "toolbar_anchor_percent_explain": "选中文字的结束点落在工具栏宽度上的位置：0% 表示工具栏从该点向右展开，50% 表示居中，100% 表示工具栏右边缘对齐该点",
+  "toolbar_anchor_percent_explain": "选中文字的结束点落在工具栏宽度上的位置：0% 表示工具栏从该点向右展开，50% 表示居中，100% 表示工具栏右边缘对齐该点；从右向左划选时工具栏跟另一端的结束点，改为向左展开",
   "toolbar_line_offset": "光标到行底距离",
   "toolbar_line_offset_explain": "从光标向下估算到所在文字行底部的距离，单位为像素。仅用于不提供选区坐标的应用（例如 GoldenDict），工具栏会放在这条估算线下方",
   "toolbar_always_display": "点击后保持工具栏",

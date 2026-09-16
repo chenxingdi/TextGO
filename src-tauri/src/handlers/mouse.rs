@@ -6,8 +6,8 @@ use crate::error::AppError;
 use crate::platform;
 use crate::{
     APP_HANDLE, CLIPBOARD_RESTORE_INTERRUPTED, ENIGO, IBEAM_CURSOR, LONG_PRESS,
-    LONG_PRESS_DURATION, SELECTION_TEXT_CACHE, SHORTCUT_PAUSED, SHORTCUT_SUSPEND,
-    SIMULATED_INPUT_MARKER, TOOLBAR_MENU_OPEN,
+    LONG_PRESS_DURATION, SELECTION_END_POINTER, SELECTION_TEXT_CACHE, SHORTCUT_PAUSED,
+    SHORTCUT_SUSPEND, SIMULATED_INPUT_MARKER, TOOLBAR_MENU_OPEN,
 };
 use enigo::{Direction, Key as EnigoKey, Keyboard, Mouse};
 use log::debug;
@@ -208,6 +208,9 @@ fn handle_mouse_press() -> Result<(), AppError> {
     DRAG_START_POS.set(Some(pos));
     IS_DRAGGING.set(false);
 
+    // a new press invalidates the pointer position recorded for the previous selection
+    clear_selection_end();
+
     // record if cursor is I-Beam
     let is_valid_cursor = is_ibeam_cursor();
     IS_VALID_CURSOR.set(is_valid_cursor);
@@ -277,6 +280,8 @@ fn handle_mouse_release() -> Result<(), AppError> {
     if IS_DRAGGING.get() {
         debug!("Checking for drag end (cursor: {})", is_valid_cursor);
         if is_valid_cursor {
+            // remember where the drag finished, the toolbar anchors on that side of the selection
+            record_selection_end();
             // emit drag end event
             emit_event("MouseClick+MouseMove", None)?;
         }
@@ -288,6 +293,8 @@ fn handle_mouse_release() -> Result<(), AppError> {
     if SHIFT_PRESSED.get() {
         debug!("Checking for shift+click (cursor: {})", is_valid_cursor);
         if is_valid_cursor {
+            // the selection extends towards the click, so this position ends it as well
+            record_selection_end();
             // emit shift+click event
             emit_event("Shift+MouseClick", None)?;
         }
@@ -323,6 +330,27 @@ fn handle_mouse_release() -> Result<(), AppError> {
     }
 
     Ok(())
+}
+
+/// Remember the pointer position that finished the current selection.
+///
+/// UI Automation only reports the geometry of a selection, never which end the pointer stopped
+/// on, so the toolbar uses this position to place itself on the end the selection was finished
+/// at. Only drag and shift-click selections are recorded: double clicks and keyboard selections
+/// keep the default alignment.
+fn record_selection_end() {
+    if let Ok(pos) = mouse_pos() {
+        if let Ok(mut end) = SELECTION_END_POINTER.lock() {
+            *end = Some((pos.0 as i32, pos.1 as i32));
+        }
+    }
+}
+
+/// Drop the recorded selection end pointer, so a stale position is never used.
+fn clear_selection_end() {
+    if let Ok(mut end) = SELECTION_END_POINTER.lock() {
+        *end = None;
+    }
 }
 
 /// Calculate distance between two points.

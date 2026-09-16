@@ -70,6 +70,9 @@ pub static CLIPBOARD_RESTORE_INTERRUPTED: AtomicBool = AtomicBool::new(false);
 pub static SELECTION_TEXT_CACHE: LazyLock<Mutex<Option<(String, Instant)>>> =
     LazyLock::new(|| Mutex::new(None));
 
+// physical screen position where the pointer finished a drag or shift-click selection
+pub static SELECTION_END_POINTER: Mutex<Option<(i32, i32)>> = Mutex::new(None);
+
 // global force get selection state (clipboard fallback)
 pub static FORCE_GET_SELECTION: AtomicBool = AtomicBool::new(true);
 

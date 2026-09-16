@@ -208,7 +208,7 @@
   "toolbar_text_gap": "Vertical Gap",
   "toolbar_text_gap_explain": "Vertical distance in pixels between the toolbar and the selected text",
   "toolbar_anchor_percent": "Horizontal Position",
-  "toolbar_anchor_percent_explain": "Where the end of the selected text sits across the toolbar width: 0% starts the toolbar at that point and grows right, 50% centers it, 100% ends the toolbar there",
+  "toolbar_anchor_percent_explain": "Where the end of the selected text sits across the toolbar width: 0% starts the toolbar at that point and grows right, 50% centers it, 100% ends the toolbar there. When a selection is dragged right to left, the toolbar follows the other end and opens leftwards",
   "toolbar_line_offset": "Cursor to Line Bottom",
   "toolbar_line_offset_explain": "Estimated distance in pixels from the cursor down to the bottom of its text line. Only used in applications that expose no selection geometry (such as GoldenDict), where the toolbar is placed below that estimate",
   "toolbar_always_display": "Always Display Toolbar",

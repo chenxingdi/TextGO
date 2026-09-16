@@ -185,11 +185,36 @@ pub fn get_selection() -> Result<String, AppError> {
     }
 }
 
+/// Bounding rectangles of every line of the selected text.
+///
+/// Returns `(left, top, right, bottom)` per line in physical screen pixels, matching the raw
+/// coordinate space used before any monitor scale conversion. UI Automation reports the lines in
+/// document order, so callers can locate the line the selection was made towards.
+pub fn get_selection_rects() -> Result<Vec<(i32, i32, i32, i32)>, AppError> {
+    let rects = read_selection_rects()?;
+
+    if rects.is_empty() {
+        return Err("No valid rectangle found".into());
+    }
+
+    Ok(rects)
+}
+
 /// Bounding rectangle of the last character in the selected text.
 ///
 /// Returns `(left, top, right, bottom)` in physical screen pixels, matching the raw
 /// coordinate space used before any monitor scale conversion.
 pub fn get_selection_rect() -> Result<(i32, i32, i32, i32), AppError> {
+    read_selection_rects()?
+        .pop()
+        .ok_or_else(|| "No valid rectangle found".into())
+}
+
+/// Read the bounding rectangles of the first selected text range.
+///
+/// Degenerate rectangles (carets or collapsed lines) are dropped; the remaining lines keep the
+/// document order UI Automation reported them in.
+fn read_selection_rects() -> Result<Vec<(i32, i32, i32, i32)>, AppError> {
     unsafe {
         // initialize COM
         let _com = ComGuard::new()?;
@@ -232,9 +257,9 @@ pub fn get_selection_rect() -> Result<(i32, i32, i32, i32), AppError> {
             return Err("No bounding rectangles found".into());
         }
 
-        // find the last valid rectangle, which is the bottom-most line of the selection
-        let mut result = Err("No valid rectangle found".into());
-        for i in (0..rect_count).rev() {
+        // collect every line of the selection
+        let mut rects = Vec::with_capacity(rect_count);
+        for i in 0..rect_count {
             let rect_index = i * 4;
             let left = *rect_ptr.add(rect_index);
             let top = *rect_ptr.add(rect_index + 1);
@@ -250,20 +275,19 @@ pub fn get_selection_rect() -> Result<(i32, i32, i32, i32), AppError> {
                 && left < MAX_VALID_COORDINATE
                 && top < MAX_VALID_COORDINATE
             {
-                result = Ok((
+                rects.push((
                     left as i32,
                     top as i32,
                     (left + width) as i32,
                     (top + height) as i32,
                 ));
-                break;
             }
         }
 
         // unaccess the SafeArray data
         SafeArrayUnaccessData(rect_array as *mut _);
 
-        result
+        Ok(rects)
     }
 }
 

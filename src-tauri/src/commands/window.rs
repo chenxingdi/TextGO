@@ -1,7 +1,8 @@
 use crate::error::AppError;
 use crate::platform;
-use crate::{ENIGO, TOOLBAR_MENU_OPEN};
+use crate::{ENIGO, SELECTION_END_POINTER, TOOLBAR_MENU_OPEN};
 use enigo::Mouse;
+use log::debug;
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,10 +27,24 @@ type LogicalRect = (f64, f64, f64, f64);
 /// Where the toolbar is anchored while it is visible.
 #[derive(Clone, Copy)]
 enum ToolbarAnchor {
-    /// Last line of the current selection, in logical screen pixels.
-    Selection(LogicalRect),
+    /// Last line of the current selection, in logical screen pixels, together with the edge of
+    /// that line the toolbar is anchored on.
+    Selection {
+        rect: LogicalRect,
+        align: SelectionAlign,
+    },
     /// Cursor position, used when the application exposes no selection geometry.
     Cursor(LogicalPosition<f64>),
+}
+
+/// Edge of the selected line the toolbar anchor sits on.
+#[derive(Clone, Copy, Debug)]
+enum SelectionAlign {
+    /// Right edge of the selected line: the default, and the edge a left-to-right selection
+    /// ends on.
+    End,
+    /// Left edge of the selected line, used when the selection was finished there.
+    Start,
 }
 
 /// Logical size the toolbar window holds or is about to take.
@@ -501,8 +516,13 @@ pub fn show_toolbar(
     *POPUP_SOURCE_FOCUS.lock()? = platform::get_focus_target();
 
     if let Some(window) = app.get_webview_window("toolbar") {
+        let mouse = mouse.unwrap_or(false);
+
         // capture the anchor before showing; it is reused when the toolbar is resized
-        let anchor = capture_toolbar_anchor(&window);
+        let anchor = capture_toolbar_anchor(&window, mouse);
+        if let Some(ToolbarAnchor::Selection { rect, align }) = anchor {
+            debug!("Toolbar anchored on selection line {rect:?} ({align:?})");
+        }
         *TOOLBAR_ANCHOR.lock()? = anchor;
 
         // position before setup so native-menu actions also inherit the current placement; the
@@ -510,14 +530,7 @@ pub fn show_toolbar(
         let placement = ToolbarPlacement::from_options(gap, anchor_percent, line_offset);
         let size = window_logical_size(&window)?;
         let inset = DEFAULT_TOOLBAR_CONTENT_INSET * toolbar_content_scale();
-        position_toolbar_at(
-            &window,
-            anchor,
-            mouse.unwrap_or(false),
-            placement,
-            size,
-            inset,
-        )?;
+        position_toolbar_at(&window, anchor, mouse, placement, size, inset)?;
 
         // show window without focusing
         if !TOOLBAR_INITIALIZED.load(Ordering::Relaxed) {
@@ -554,13 +567,104 @@ impl ToolbarPlacement {
 
 /// Capture the anchor the toolbar should be placed against.
 ///
-/// The selection rectangle is preferred; applications that expose no selection geometry (such
-/// as GoldenDict) fall back to the cursor position.
-fn capture_toolbar_anchor(window: &WebviewWindow) -> Option<ToolbarAnchor> {
-    capture_selection_anchor(window)
-        .map(ToolbarAnchor::Selection)
-        .or_else(|_| capture_cursor_anchor(window).map(ToolbarAnchor::Cursor))
-        .ok()
+/// The selection is preferred; applications that expose no selection geometry (such as
+/// GoldenDict) fall back to the cursor position. `mouse` marks a selection made with the
+/// pointer, whose end position is known and decides which line, and which edge of that line,
+/// the toolbar is anchored on.
+fn capture_toolbar_anchor(window: &WebviewWindow, mouse: bool) -> Option<ToolbarAnchor> {
+    let lines = capture_selection_lines(window).unwrap_or_default();
+
+    if lines.is_empty() {
+        return capture_cursor_anchor(window)
+            .map(ToolbarAnchor::Cursor)
+            .ok();
+    }
+
+    // the pointer position recorded when the selection was finished is only available for
+    // pointer selections; keyboard selections keep the last reported line and its right edge
+    let pointer = if mouse {
+        capture_selection_pointer(window)
+    } else {
+        None
+    };
+    let rect = selection_line_at(&lines, pointer);
+    let align = selection_align_at(pointer, rect);
+
+    Some(ToolbarAnchor::Selection { rect, align })
+}
+
+/// Line of the selection the toolbar is anchored on.
+///
+/// UI Automation reports the selection lines in document order and says nothing about which end
+/// the pointer stopped on, so anchoring on the last line would leave a right-to-left selection
+/// with the toolbar below its bottom line instead of below the line the pointer finished on.
+/// Without a pointer position (keyboard selections) that last line is the best guess, because a
+/// selection made towards the end of the text also ends on it.
+fn selection_line_at(lines: &[LogicalRect], pointer: Option<LogicalPosition<f64>>) -> LogicalRect {
+    let last = lines[lines.len() - 1];
+
+    let Some(pointer) = pointer else {
+        return last;
+    };
+
+    lines
+        .iter()
+        .copied()
+        .min_by(|a, b| line_gap(pointer.y, *a).total_cmp(&line_gap(pointer.y, *b)))
+        .unwrap_or(last)
+}
+
+/// Vertical distance between a point and a line rectangle, zero when the point is inside it.
+fn line_gap(y: f64, line: LogicalRect) -> f64 {
+    let (_, top, _, bottom) = line;
+
+    if y < top {
+        top - y
+    } else if y > bottom {
+        y - bottom
+    } else {
+        0.0
+    }
+}
+
+/// Decide which edge of the given line the toolbar is anchored on.
+///
+/// UI Automation reports only the geometry of a selection, never which end the pointer stopped
+/// on, so a right-to-left selection would otherwise be placed exactly like a left-to-right one.
+/// The pointer position tells the two apart: a pointer on the left part of the line anchors on
+/// its left edge, so the toolbar opens leftwards; keyboard selections keep the right edge.
+fn selection_align_at(pointer: Option<LogicalPosition<f64>>, rect: LogicalRect) -> SelectionAlign {
+    let (text_left, _, text_right, _) = rect;
+
+    match pointer {
+        Some(pointer) if (pointer.x - text_left).abs() < (pointer.x - text_right).abs() => {
+            SelectionAlign::Start
+        }
+        _ => SelectionAlign::End,
+    }
+}
+
+/// Capture the logical pointer position that finished the last drag or shift-click selection.
+fn capture_selection_pointer(window: &WebviewWindow) -> Option<LogicalPosition<f64>> {
+    let end = *SELECTION_END_POINTER.lock().ok()?;
+    let (x, y) = end?;
+
+    #[cfg(target_os = "windows")]
+    {
+        // enigo reports physical pixels, normalize them with the monitor scale
+        let scale_factor = monitor_at(window, x, y).ok()?.scale_factor();
+
+        Some(LogicalPosition::new(
+            x as f64 / scale_factor,
+            y as f64 / scale_factor,
+        ))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = window;
+
+        Some(LogicalPosition::new(x as f64, y as f64))
+    }
 }
 
 /// Logical size the window currently occupies.
@@ -587,8 +691,8 @@ fn position_toolbar_at(
     inset: f64,
 ) -> Result<(), AppError> {
     match anchor {
-        Some(ToolbarAnchor::Selection(rect)) => {
-            position_toolbar_below_selection(window, rect, placement, size, inset)
+        Some(ToolbarAnchor::Selection { rect, align }) => {
+            position_toolbar_below_selection(window, rect, align, placement, size, inset)
         }
         Some(ToolbarAnchor::Cursor(cursor)) => {
             position_toolbar_near_cursor(window, cursor, placement, size, inset)
@@ -789,30 +893,44 @@ fn safe_area(window_width: f64, window_height: f64, monitor: &Monitor) -> SafeAr
     }
 }
 
-/// Capture the logical screen rectangle of the last line of the current text selection.
+/// Capture the logical screen rectangles of every line of the current text selection.
 ///
-/// Returns `(left, top, right, bottom)` and fails when the focused application exposes no
-/// selection geometry, so callers can fall back to the cursor position.
-fn capture_selection_anchor(window: &WebviewWindow) -> Result<LogicalRect, AppError> {
-    let (left, top, right, bottom) = platform::get_selection_rect()?;
+/// Fails when the focused application exposes no selection geometry, so callers can fall back to
+/// the cursor position.
+fn capture_selection_lines(window: &WebviewWindow) -> Result<Vec<LogicalRect>, AppError> {
+    let rects = platform::get_selection_rects()?;
+
+    // the monitor scale is read from the last line, which is where the caller's fallback would
+    // have looked as well
+    let (_, _, right, bottom) = *rects.last().ok_or("No selection geometry")?;
 
     #[cfg(target_os = "windows")]
     {
         // UI Automation reports physical pixels, normalize them with the monitor scale
         let scale_factor = monitor_at(window, right, bottom)?.scale_factor();
 
-        Ok((
-            left as f64 / scale_factor,
-            top as f64 / scale_factor,
-            right as f64 / scale_factor,
-            bottom as f64 / scale_factor,
-        ))
+        Ok(rects
+            .iter()
+            .map(|(left, top, right, bottom)| {
+                (
+                    *left as f64 / scale_factor,
+                    *top as f64 / scale_factor,
+                    *right as f64 / scale_factor,
+                    *bottom as f64 / scale_factor,
+                )
+            })
+            .collect())
     }
     #[cfg(not(target_os = "windows"))]
     {
         let _ = window;
 
-        Ok((left as f64, top as f64, right as f64, bottom as f64))
+        Ok(rects
+            .iter()
+            .map(|(left, top, right, bottom)| {
+                (*left as f64, *top as f64, *right as f64, *bottom as f64)
+            })
+            .collect())
     }
 }
 
@@ -842,16 +960,19 @@ fn capture_cursor_anchor(window: &WebviewWindow) -> Result<LogicalPosition<f64>,
 ///
 /// The toolbar keeps `placement.gap` between its content and the selected text, so the text is
 /// never covered, and is aligned horizontally so that the end of the selection sits at
-/// `placement.anchor_percent` of its width. When the space below is insufficient the toolbar
+/// `placement.anchor_percent` of its width. A selection that was finished on its left edge
+/// mirrors that placement, so a right-to-left selection opens to the left of the text instead
+/// of landing where a left-to-right one does. When the space below is insufficient the toolbar
 /// flips above the selection instead.
 fn position_toolbar_below_selection(
     window: &WebviewWindow,
     anchor: LogicalRect,
+    align: SelectionAlign,
     placement: ToolbarPlacement,
     size: ToolbarSize,
     inset: f64,
 ) -> Result<(), AppError> {
-    let (_, text_top, text_right, text_bottom) = anchor;
+    let (text_left, text_top, text_right, text_bottom) = anchor;
 
     // the anchor is logical, so resolve the monitor in logical space as well
     let monitor = monitor_at_logical(window, text_right, text_bottom)?;
@@ -861,8 +982,13 @@ fn position_toolbar_below_selection(
     // configured visible gap between the toolbar content and the selected text
     let ratio = placement.anchor_percent / 100.0;
 
-    // place the end of the selection at the configured position across the toolbar width
-    let x = (text_right - size.width * ratio).clamp(area.min_x, area.max_x);
+    // place the end of the selection at the configured position across the toolbar width; when
+    // the selection ended on its left edge, the same placement is mirrored to open leftwards
+    let x = match align {
+        SelectionAlign::End => text_right - size.width * ratio,
+        SelectionAlign::Start => text_left - size.width * (1.0 - ratio),
+    }
+    .clamp(area.min_x, area.max_x);
 
     // preferred placement: just below the selected text
     let below = text_bottom + placement.gap - inset;

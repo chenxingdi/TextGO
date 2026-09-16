@@ -449,6 +449,14 @@ pub fn get_selection() -> Result<String, AppError> {
     Ok(String::new())
 }
 
+/// Bounding rectangles of the selected text lines.
+///
+/// macOS only exposes the bounds of single ranges, so the caller receives the rectangle of the
+/// last character of the selection, exactly like [`get_selection_rect`].
+pub fn get_selection_rects() -> Result<Vec<(i32, i32, i32, i32)>, AppError> {
+    Ok(vec![get_selection_rect()?])
+}
+
 /// Bounding rectangle of the last character in the selected text.
 ///
 /// Returns `(left, top, right, bottom)` in logical screen points.
