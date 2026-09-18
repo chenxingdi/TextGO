@@ -9,7 +9,8 @@ import {
   TOOLBAR_CORNER_RADIUS,
   TOOLBAR_LINE_OFFSET,
   TOOLBAR_OPACITY,
-  TOOLBAR_TEXT_GAP
+  TOOLBAR_TEXT_GAP,
+  TRIPLE_CLICK_SHORTCUT
 } from '$lib/constants';
 import { isSystemTheme, type Theme, type ThemeSetting } from '$lib/theme';
 import type {
@@ -205,6 +206,11 @@ export const shortcuts = persisted<Record<string, Shortcut>>(
   'shortcuts',
   {},
   {
+    onchange: (shortcuts) => {
+      if (getCurrentWindow().label === 'main') {
+        invoke('set_triple_click_registered', { registered: !!shortcuts[TRIPLE_CLICK_SHORTCUT] });
+      }
+    },
     onload: async (shortcuts) => {
       // register all shortcut groups when main window initializes
       if (getCurrentWindow().label === 'main') {

@@ -9,7 +9,7 @@
   import Recorder from '$lib/components/Recorder.svelte';
   import Shortcut from '$lib/components/Shortcut.svelte';
   import Toggle from '$lib/components/Toggle.svelte';
-  import { DBCLICK_SHORTCUT, DRAG_SHORTCUT, SHIFT_CLICK_SHORTCUT } from '$lib/constants';
+  import { DBCLICK_SHORTCUT, DRAG_SHORTCUT, SHIFT_CLICK_SHORTCUT, TRIPLE_CLICK_SHORTCUT } from '$lib/constants';
   import { formatShortcut, isMouseShortcut } from '$lib/helpers';
   import { NoData } from '$lib/icons';
   import { m } from '$lib/paraglide/messages';
@@ -17,7 +17,7 @@
   import { blacklist, longPress, shortcuts } from '$lib/stores.svelte';
   import ArrowArcRightIcon from 'phosphor-svelte/lib/ArrowArcRightIcon';
   import ArrowCircleRightIcon from 'phosphor-svelte/lib/ArrowCircleRightIcon';
-  import ArrowClockwiseIcon from 'phosphor-svelte/lib/ArrowClockwiseIcon';
+  import ArrowCounterClockwiseIcon from 'phosphor-svelte/lib/ArrowCounterClockwiseIcon';
   import ArrowFatLineRightIcon from 'phosphor-svelte/lib/ArrowFatLineRightIcon';
   import ArrowFatUpIcon from 'phosphor-svelte/lib/ArrowFatUpIcon';
   import ArrowsClockwiseIcon from 'phosphor-svelte/lib/ArrowsClockwiseIcon';
@@ -26,6 +26,7 @@
   import GearSixIcon from 'phosphor-svelte/lib/GearSixIcon';
   import KeyboardIcon from 'phosphor-svelte/lib/KeyboardIcon';
   import MouseLeftClickIcon from 'phosphor-svelte/lib/MouseLeftClickIcon';
+  import NumberThreeIcon from 'phosphor-svelte/lib/NumberThreeIcon';
   import ProhibitIcon from 'phosphor-svelte/lib/ProhibitIcon';
   import ProhibitInsetIcon from 'phosphor-svelte/lib/ProhibitInsetIcon';
   import SparkleIcon from 'phosphor-svelte/lib/SparkleIcon';
@@ -48,17 +49,50 @@
   // blacklist manager
   let blacklistManager: BWList;
 
-  // dropdown element
-  let dropdown: HTMLDetailsElement;
-  let dropdownOpen: boolean = $state(false);
+  // open dropdown: null for closed, empty string for registration, or the shortcut to copy
+  let dropdownOpen: string | null = $state(null);
+
+  // source shortcut for the shared keyboard recorder
+  let recordingSource = '';
+
+  /**
+   * Record a new shortcut, optionally copying rules from another group.
+   *
+   * @param source - source shortcut to copy
+   */
+  function showRecorder(source = '') {
+    recordingSource = source;
+    dropdownOpen = null;
+    recorder.showModal();
+  }
+
+  /**
+   * Toggle the shortcut picker or open the recorder when only keyboard shortcuts remain.
+   *
+   * @param source - source shortcut to copy
+   */
+  function toggleDropdown(source = '') {
+    if (
+      shortcuts.current[DRAG_SHORTCUT] &&
+      shortcuts.current[DBCLICK_SHORTCUT] &&
+      shortcuts.current[TRIPLE_CLICK_SHORTCUT] &&
+      shortcuts.current[SHIFT_CLICK_SHORTCUT]
+    ) {
+      showRecorder(source);
+    } else {
+      dropdownOpen = dropdownOpen === source ? null : source;
+    }
+  }
 
   /**
    * Register new shortcut.
    *
    * @param shortcut - shortcut string to register
+   * @param source - source shortcut whose rules should be copied
    */
-  async function register(shortcut: string) {
-    if (!shortcut) {
+  async function register(shortcut: string, source = '') {
+    dropdownOpen = null;
+    if (!shortcut || (source && !shortcuts.current[source])) {
       return;
     }
 
@@ -68,11 +102,28 @@
       return;
     }
 
+    const rules = (shortcuts.current[source]?.rules ?? []).map((rule) => ({
+      ...rule,
+      id: crypto.randomUUID(),
+      shortcut
+    }));
+
     // register new shortcut
     shortcuts.current[shortcut] = {
       mode: isMouseShortcut(shortcut) ? 'toolbar' : 'quiet',
-      rules: []
+      rules
     };
+
+    try {
+      // one rule is enough to register the whole shortcut group with the backend
+      if (rules.length > 0) {
+        await manager.register(rules[0]);
+      }
+    } catch (error) {
+      delete shortcuts.current[shortcut];
+      alert({ level: 'error', message: String(error) });
+      return;
+    }
 
     // wait for DOM update then scroll to newly registered shortcut position
     await tick();
@@ -93,6 +144,8 @@
     if (b === DRAG_SHORTCUT) return 1;
     if (a === DBCLICK_SHORTCUT) return -1;
     if (b === DBCLICK_SHORTCUT) return 1;
+    if (a === TRIPLE_CLICK_SHORTCUT) return -1;
+    if (b === TRIPLE_CLICK_SHORTCUT) return 1;
     if (a === SHIFT_CLICK_SHORTCUT) return -1;
     if (b === SHIFT_CLICK_SHORTCUT) return 1;
     return a.localeCompare(b);
@@ -106,6 +159,7 @@
   function shortcutHint(shortcut: string) {
     if (shortcut === DRAG_SHORTCUT) return m.mouse_drag_hint();
     if (shortcut === DBCLICK_SHORTCUT) return m.mouse_dbclick_hint();
+    if (shortcut === TRIPLE_CLICK_SHORTCUT) return m.mouse_triple_click_hint();
     if (shortcut === SHIFT_CLICK_SHORTCUT) return m.mouse_shift_click_hint();
     return m.keyboard_shortcut_hint();
   }
@@ -122,11 +176,63 @@
 <svelte:window
   onclick={(event) => {
     // close the dropdown when clicking outside of it
-    if (event.target instanceof Node && !dropdown.contains(event.target)) {
-      dropdownOpen = false;
+    if (event.target instanceof Element && !event.target.closest('[data-shortcut-dropdown]')) {
+      dropdownOpen = null;
     }
   }}
 />
+
+{#snippet shortcutMenu(source = '')}
+  <ul class="menu dropdown-content z-1 mt-1 min-w-42 gap-1 rounded-box border bg-base-100 p-1 shadow-lg">
+    <!-- mouse drag-select option -->
+    <li class={shortcuts.current[DRAG_SHORTCUT] ? 'hidden' : ''}>
+      <button class="btn px-1 btn-sm" onclick={() => register(DRAG_SHORTCUT, source)}>
+        <span class="flex">
+          <MouseLeftClickIcon class="size-4" />
+          <WaveSineIcon class="size-4" />
+        </span>
+        <span class="mx-auto tracking-wider">{m.mouse_drag()}</span>
+      </button>
+    </li>
+    <!-- mouse double-click option -->
+    <li class={shortcuts.current[DBCLICK_SHORTCUT] ? 'hidden' : ''}>
+      <button class="btn px-1 btn-sm" onclick={() => register(DBCLICK_SHORTCUT, source)}>
+        <span class="flex">
+          <MouseLeftClickIcon class="size-4" />
+          <MouseLeftClickIcon class="size-4" />
+        </span>
+        <span class="mx-auto tracking-wider">{m.mouse_dbclick()}</span>
+      </button>
+    </li>
+    <!-- mouse triple-click option -->
+    <li class={shortcuts.current[TRIPLE_CLICK_SHORTCUT] ? 'hidden' : ''}>
+      <button class="btn px-1 btn-sm" onclick={() => register(TRIPLE_CLICK_SHORTCUT, source)}>
+        <span class="flex">
+          <MouseLeftClickIcon class="size-4" />
+          <NumberThreeIcon class="size-4" />
+        </span>
+        <span class="mx-auto tracking-wider">{m.mouse_triple_click()}</span>
+      </button>
+    </li>
+    <!-- mouse shift-click option -->
+    <li class={shortcuts.current[SHIFT_CLICK_SHORTCUT] ? 'hidden' : ''}>
+      <button class="btn px-1 btn-sm" onclick={() => register(SHIFT_CLICK_SHORTCUT, source)}>
+        <span class="flex">
+          <ArrowFatUpIcon class="size-4" />
+          <MouseLeftClickIcon class="size-4" />
+        </span>
+        <span class="mx-auto tracking-wider">{m.mouse_shift_click()}</span>
+      </button>
+    </li>
+    <!-- keyboard shortcut option -->
+    <li>
+      <button class="btn px-1 btn-sm" onclick={() => showRecorder(source)}>
+        <KeyboardIcon class="mx-1.75 size-4.5" />
+        <span class="mx-auto tracking-wider">{m.keyboard_keys()}</span>
+      </button>
+    </li>
+  </ul>
+{/snippet}
 
 <div class="relative min-h-(--app-h) rounded-container">
   <div class="flex items-center gap-2">
@@ -145,86 +251,17 @@
       <ProhibitIcon class="size-5 rotate-90" />
       <span class="text-sm font-normal">{m.blacklist()}</span>
     </button>
-    <details class="dropdown dropdown-end text-nowrap" bind:this={dropdown} bind:open={dropdownOpen}>
+    <details class="dropdown dropdown-end text-nowrap" data-shortcut-dropdown open={dropdownOpen === ''}>
       <summary
         class="btn text-sm btn-sm btn-submit"
         onclick={(event) => {
-          if (
-            shortcuts.current[DRAG_SHORTCUT] &&
-            shortcuts.current[DBCLICK_SHORTCUT] &&
-            shortcuts.current[SHIFT_CLICK_SHORTCUT]
-          ) {
-            // all mouse shortcuts are registered, open recorder directly
-            event.preventDefault();
-            recorder.showModal();
-          }
+          event.preventDefault();
+          toggleDropdown();
         }}
       >
         <StackPlusIcon class="size-5" />{m.register_shortcut()}
       </summary>
-      <ul class="menu dropdown-content z-1 mt-1 min-w-42 gap-1 rounded-box border bg-base-100 p-1 shadow-lg">
-        <!-- mouse drag-select option -->
-        <li class={shortcuts.current[DRAG_SHORTCUT] ? 'hidden' : ''}>
-          <button
-            class="btn px-1 btn-sm"
-            onclick={() => {
-              register(DRAG_SHORTCUT);
-              dropdownOpen = false;
-            }}
-          >
-            <span class="flex">
-              <MouseLeftClickIcon class="size-4" />
-              <WaveSineIcon class="size-4" />
-            </span>
-            <span class="mx-auto tracking-wider">{m.mouse_drag()}</span>
-          </button>
-        </li>
-        <!-- mouse double-click option -->
-        <li class={shortcuts.current[DBCLICK_SHORTCUT] ? 'hidden' : ''}>
-          <button
-            class="btn px-1 btn-sm"
-            onclick={() => {
-              register(DBCLICK_SHORTCUT);
-              dropdownOpen = false;
-            }}
-          >
-            <span class="flex">
-              <MouseLeftClickIcon class="size-4" />
-              <MouseLeftClickIcon class="size-4" />
-            </span>
-            <span class="mx-auto tracking-wider">{m.mouse_dbclick()}</span>
-          </button>
-        </li>
-        <!-- mouse shift-click option -->
-        <li class={shortcuts.current[SHIFT_CLICK_SHORTCUT] ? 'hidden' : ''}>
-          <button
-            class="btn px-1 btn-sm"
-            onclick={() => {
-              register(SHIFT_CLICK_SHORTCUT);
-              dropdownOpen = false;
-            }}
-          >
-            <span class="flex">
-              <ArrowFatUpIcon class="size-4" />
-              <MouseLeftClickIcon class="size-4" />
-            </span>
-            <span class="mx-auto tracking-wider">{m.mouse_shift_click()}</span>
-          </button>
-        </li>
-        <!-- keyboard shortcut option -->
-        <li>
-          <button
-            class="btn px-1 btn-sm"
-            onclick={() => {
-              recorder.showModal();
-              dropdownOpen = false;
-            }}
-          >
-            <KeyboardIcon class="mx-1.75 size-4.5" />
-            <span class="mx-auto tracking-wider">{m.keyboard_keys()}</span>
-          </button>
-        </li>
-      </ul>
+      {@render shortcutMenu()}
     </details>
   </div>
   {#if showNoData && Object.keys(shortcuts.current).length === 0}
@@ -266,9 +303,9 @@
           </span>
         </button>
         <Button
-          icon={disabled ? ArrowClockwiseIcon : ProhibitInsetIcon}
+          icon={disabled ? ArrowCounterClockwiseIcon : ProhibitInsetIcon}
           size="sm"
-          class="ml-auto {disabled ? 'text-emphasis' : 'text-inactive'}"
+          class="ml-auto {disabled ? 'text-inactive' : 'text-emphasis'}"
           iconClass={disabled ? '' : 'rotate-90'}
           text={disabled ? m.enable_shortcut() : m.disable_shortcut()}
           onclick={async () => {
@@ -279,10 +316,22 @@
             }
           }}
         />
+        <div class="dropdown dropdown-end ml-1" class:dropdown-open={dropdownOpen === shortcut} data-shortcut-dropdown>
+          <Button
+            icon={StackPlusIcon}
+            size="sm"
+            class={disabled ? 'text-inactive' : 'text-emphasis'}
+            text={m.copy_shortcut()}
+            onclick={() => toggleDropdown(shortcut)}
+          />
+          {#if dropdownOpen === shortcut}
+            {@render shortcutMenu(shortcut)}
+          {/if}
+        </div>
         <Button
           icon={TrashIcon}
           size="sm"
-          class="ml-1 text-emphasis"
+          class="ml-1 {disabled ? 'text-inactive' : 'text-emphasis'}"
           text={m.delete_shortcut()}
           onclick={() => {
             const clear = () => ruleBinder?.clear(shortcut);
@@ -378,7 +427,7 @@
   {/each}
 </div>
 
-<Recorder bind:this={recorder} onrecord={register} />
+<Recorder bind:this={recorder} onrecord={(shortcut) => register(shortcut, recordingSource)} />
 
 <Binder bind:this={ruleBinder} />
 
