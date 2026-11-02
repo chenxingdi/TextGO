@@ -98,6 +98,6 @@ jobs:
           tagName: 'v__VERSION__'
           releaseName: 'v__VERSION__'
           releaseBody: ${{ steps.changelog.outputs.changelog }}
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
