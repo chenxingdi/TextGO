@@ -625,6 +625,8 @@ async function captureContext(): Promise<SelectionContext | undefined> {
   try {
     const context = await invoke<SelectionContext>('get_selection_context');
     const empty = !context || (!context.title && !context.url && !context.paragraph);
+    // kept even when it carries only a title or URL: the prompt variables may still use them, while
+    // the automatic context block and the popup chip go by the surrounding text alone
     return empty ? undefined : context;
   } catch (error) {
     console.error(`Failed to read selection context: ${error}`);

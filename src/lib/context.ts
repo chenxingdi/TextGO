@@ -25,60 +25,39 @@ export function appName(appId?: string): string {
 }
 
 /**
- * Check whether a captured context carries information beyond the application name.
- *
- * The application alone adds little to a translation request, so it does not justify a context
- * block or a chip on its own.
+ * Read the surrounding text out of a captured context.
  *
  * @param context - captured context
- * @returns whether the context contains a window title, URL or surrounding text
+ * @returns trimmed surrounding text, or an empty string when none was captured
  */
-export function hasContext(context?: SelectionContext | null): boolean {
-  return [context?.title?.trim(), context?.url?.trim(), context?.paragraph?.trim()].some(Boolean);
+export function contextParagraph(context?: SelectionContext | null): string {
+  return context?.paragraph?.trim() ?? '';
 }
 
 /**
  * Build the system-prompt block that gives the model background about the selection.
  *
- * The block is only produced when there is something to inject, so requests without context
- * keep their original prompt byte for byte.
+ * Only the surrounding text is injected. Window titles, page URLs and application names are left
+ * out on purpose: they rarely help disambiguate a word and they leak what the user is looking at.
+ * The block is only produced when there is text to inject, so requests without context keep their
+ * original prompt byte for byte.
  *
  * @param context - captured context
- * @returns Markdown section, or an empty string when the context carries no information
+ * @returns Markdown section, or an empty string when the context carries no surrounding text
  */
 export function composeContextBlock(context?: SelectionContext | null): string {
-  if (!hasContext(context)) {
+  const paragraph = contextParagraph(context).slice(0, CONTEXT_PARAGRAPH_LIMIT);
+  if (!paragraph) {
     return '';
   }
 
-  const facts: string[] = [];
-  const title = context?.title?.trim();
-  const url = context?.url?.trim();
-  const app = appName(context?.appId);
-  if (title) {
-    facts.push(`- Window title: ${title}`);
-  }
-  if (app) {
-    facts.push(`- Source application: ${app}`);
-  }
-  if (url) {
-    facts.push(`- Page URL: ${url}`);
-  }
-
-  const paragraph = (context?.paragraph?.trim() ?? '').slice(0, CONTEXT_PARAGRAPH_LIMIT);
-  const sections = [
+  return [
     '## Context',
     [
-      'Background information for interpreting the text to translate.',
+      'Text around the selection, provided as background for interpreting it.',
       'Use it only to pick the right meaning, terminology and tone.',
       'Never translate, quote or describe this background in the response.'
-    ].join(' ')
-  ];
-  if (facts.length > 0) {
-    sections.push(facts.join('\n'));
-  }
-  if (paragraph) {
-    sections.push(`Text around the selection:\n"""\n${paragraph}\n"""`);
-  }
-  return sections.join('\n\n');
+    ].join(' '),
+    `Text around the selection:\n"""\n${paragraph}\n"""`
+  ].join('\n\n');
 }

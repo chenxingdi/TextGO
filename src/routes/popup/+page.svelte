@@ -222,7 +222,7 @@
   import Button from '$lib/components/Button.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import Select from '$lib/components/Select.svelte';
-  import { appName, composeContextBlock, hasContext } from '$lib/context';
+  import { composeContextBlock, contextParagraph as contextParagraphOf } from '$lib/context';
   import { renderTranslationPrompt } from '$lib/executor';
   import { NATURAL_CASES } from '$lib/matcher';
   import { m } from '$lib/paraglide/messages';
@@ -351,18 +351,10 @@
 
   // captured context panel state
   let contextOpen = $state(false);
-  let contextInfo = $derived.by(() => {
-    const context = entry?.context;
-    if (!hasContext(context)) {
-      return null;
-    }
-    return {
-      title: context?.title?.trim() ?? '',
-      app: appName(context?.appId),
-      url: context?.url?.trim() ?? '',
-      paragraph: context?.paragraph?.trim() ?? ''
-    };
-  });
+  // only the surrounding text counts as context; the window title, page URL and application name
+  // are deliberately not shown or injected
+  let contextParagraph = $derived.by(() => contextParagraphOf(entry?.context));
+  let contextAvailable = $derived(contextParagraph.length > 0);
 
   /**
    * Apply persisted popup window size to native window.
@@ -890,49 +882,39 @@
           />
         </div>
       </div>
-      <!-- captured context chip -->
-      {#if promptMode && contextInfo && smartContextDisplay.current}
+      <!-- captured context chip: reports whether surrounding text was captured, and only that -->
+      {#if promptMode && smartContextDisplay.current}
         <div class="shrink-0" style:background-color={contentBackgroundStyle}>
           <div class="flex items-center px-3 py-1">
-            <button
-              class="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-field px-1 py-0.5 text-left transition-colors hover:bg-base-content/5"
-              aria-expanded={contextOpen}
-              onclick={() => (contextOpen = !contextOpen)}
-            >
-              <CaretDownIcon
-                class="size-3.5 shrink-0 opacity-50 transition-transform {contextOpen ? 'rotate-180' : ''}"
-              />
-              <span class="shrink-0 text-xs font-medium tracking-wide opacity-70">{m.context_enhancement()}</span>
-              <span class="truncate text-xs opacity-50">
-                {[contextInfo.app, contextInfo.title].filter(Boolean).join(' · ')}
-              </span>
-            </button>
+            {#if contextAvailable}
+              <button
+                class="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-field px-1 py-0.5 text-left transition-colors hover:bg-base-content/5"
+                aria-expanded={contextOpen}
+                onclick={() => (contextOpen = !contextOpen)}
+              >
+                <CaretDownIcon
+                  class="size-3.5 shrink-0 opacity-50 transition-transform {contextOpen ? 'rotate-180' : ''}"
+                />
+                <span class="truncate text-xs font-medium tracking-wide opacity-70">
+                  {m.context_available()}
+                </span>
+              </button>
+            {:else}
+              <!-- nothing to expand: no caret, no button -->
+              <div class="flex min-w-0 flex-1 items-center gap-1.5 px-1 py-0.5">
+                <span class="size-3.5 shrink-0" aria-hidden="true"></span>
+                <span class="truncate text-xs font-medium tracking-wide opacity-50">
+                  {m.context_unavailable()}
+                </span>
+              </div>
+            {/if}
           </div>
-          {#if contextOpen}
-            <div class="space-y-1 px-3 pb-2 text-xs opacity-70">
-              {#if contextInfo.title}
-                <div class="truncate" title={contextInfo.title}>
-                  <span class="opacity-60">{m.context_variable_title()}</span>
-                  <span class="mx-1 opacity-40">·</span>
-                  {contextInfo.title}
-                </div>
-              {/if}
-              {#if contextInfo.url}
-                <div class="truncate" title={contextInfo.url}>
-                  <span class="opacity-60">{m.context_variable_url()}</span>
-                  <span class="mx-1 opacity-40">·</span>
-                  {contextInfo.url}
-                </div>
-              {/if}
-              {#if contextInfo.paragraph}
-                <div
-                  class="max-h-32 overflow-auto rounded-box border border-base-content/10 px-2 py-1 whitespace-pre-wrap"
-                >
-                  {contextInfo.paragraph}
-                </div>
-              {/if}
-              <div class="text-[0.7rem] opacity-60">
-                {smartContextAutoInject.current ? m.context_auto_inject_hint() : m.context_variables_hint()}
+          {#if contextAvailable && contextOpen}
+            <div class="px-3 pb-2 text-xs opacity-70">
+              <div
+                class="max-h-32 overflow-auto rounded-box border border-base-content/10 px-2 py-1 whitespace-pre-wrap"
+              >
+                {contextParagraph}
               </div>
             </div>
           {/if}
