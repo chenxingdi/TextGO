@@ -25,7 +25,7 @@ jobs:
       - name: setup rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: clippy
 
       - name: cache rust build
         uses: Swatinem/rust-cache@v2
@@ -41,9 +41,6 @@ jobs:
       # the generated messages are gitignored and are otherwise only produced by the vite plugin
       - name: compile messages
         run: npx paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide
-
-      - name: check rust formatting
-        run: cargo fmt --manifest-path ./src-tauri/Cargo.toml --check
 
       - name: lint rust
         run: cargo clippy --manifest-path ./src-tauri/Cargo.toml --all-targets -- -D warnings

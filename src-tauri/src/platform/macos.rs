@@ -1,7 +1,5 @@
 use crate::error::AppError;
-use crate::platform::{
-    is_browser, paragraph_around, SelectionContext, CONTEXT_WINDOW_RADIUS,
-};
+use crate::platform::{is_browser, paragraph_around, SelectionContext, CONTEXT_WINDOW_RADIUS};
 use core_foundation::array::CFArray;
 use core_foundation::base::{CFRange, CFType, CFTypeRef, TCFType};
 use core_foundation::string::{CFString, CFStringRef};
@@ -572,7 +570,9 @@ fn get_string_for_range(element: &CFType, range: CFRange) -> Result<String, AppE
             &mut value_ptr,
         );
         if error_code != 0 || value_ptr.is_null() {
-            return Err(format!("Failed to read text for range, error code: {}", error_code).into());
+            return Err(
+                format!("Failed to read text for range, error code: {}", error_code).into(),
+            );
         }
 
         let value = CFType::wrap_under_create_rule(value_ptr);

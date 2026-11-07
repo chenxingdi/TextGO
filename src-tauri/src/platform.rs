@@ -112,11 +112,7 @@ pub fn paragraph_around(text: &str, selection: &str, limit: usize) -> String {
     let end = text[offset..]
         .find("\n\n")
         .map(|index| offset + index)
-        .or_else(|| {
-            text[offset..]
-                .find("\r\n\r\n")
-                .map(|index| offset + index)
-        })
+        .or_else(|| text[offset..].find("\r\n\r\n").map(|index| offset + index))
         .unwrap_or(text.len());
 
     clip_around_selection(&text[start.min(end)..end], selection, limit)
@@ -216,4 +212,5 @@ mod tests {
         assert!(is_browser("org.mozilla.firefox"));
         assert!(!is_browser("C:\\Code\\VSCode\\Code.exe"));
         assert!(!is_browser("com.apple.TextEdit"));
-    }}
+    }
+}

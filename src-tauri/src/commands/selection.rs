@@ -1,20 +1,18 @@
-use crate::commands::clipboard::{get_clipboard_text, with_clipboard_backup};
 #[cfg(not(target_os = "windows"))]
 use crate::commands::clipboard::clear_clipboard;
 #[cfg(target_os = "windows")]
 use crate::commands::clipboard::{clipboard_sequence, CLIPBOARD_CONSUMED_SEQUENCE};
+use crate::commands::clipboard::{get_clipboard_text, with_clipboard_backup};
 use crate::commands::keyboard::send_copy_keys;
 use crate::commands::shortcut::ShortcutHandlerGuard;
 use crate::error::AppError;
 use crate::platform::{self, SelectionContext};
-use crate::{
-    CONTEXT_LIMIT, FORCE_GET_SELECTION, SELECTION_CONTEXT_CACHE, SELECTION_TEXT_CACHE,
-};
+use crate::{CONTEXT_LIMIT, FORCE_GET_SELECTION, SELECTION_CONTEXT_CACHE, SELECTION_TEXT_CACHE};
 use log::{debug, warn};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 #[cfg(target_os = "windows")]
 use std::time::Instant;
-use std::time::Duration;
 use tauri::AppHandle;
 
 // maximum wait time in milliseconds for clipboard to update

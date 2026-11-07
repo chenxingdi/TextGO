@@ -269,8 +269,10 @@ fn setup_app(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
             .and_then(|value| value.as_u64())
             .unwrap_or(platform::CONTEXT_TEXT_LIMIT_DEFAULT as u64);
         let limit = if enabled {
-            (limit as usize)
-                .clamp(platform::CONTEXT_TEXT_LIMIT_MIN, platform::CONTEXT_TEXT_LIMIT_MAX)
+            (limit as usize).clamp(
+                platform::CONTEXT_TEXT_LIMIT_MIN,
+                platform::CONTEXT_TEXT_LIMIT_MAX,
+            )
         } else {
             0
         };
