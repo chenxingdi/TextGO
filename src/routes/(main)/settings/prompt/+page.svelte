@@ -161,68 +161,70 @@
   });
 </script>
 
-<Setting icon={RobotIcon} title={m.ai_conversation()} moreOptions={() => promptOptions.show()} class="min-h-(--app-h)">
-  <List
-    icon={SparkleIcon}
-    title={m.prompt_template_count({ count: prompts.current.length })}
-    name={m.prompt_template()}
-    hint={m.ai_conversation_hint()}
-    bind:data={prompts.current}
-    oncreate={() => promptCreator.showModal()}
-    onimport={async () => {
-      try {
-        const path = await open({
-          multiple: false,
-          directory: false,
-          filters: [{ name: 'JSON', extensions: ['json'] }]
-        });
-        if (path) {
-          const id = (await basename(path)).replace(/\.json$/i, '');
-          const contents = await readTextFile(path);
-          promptCreator.install({
-            id: id,
-            ...JSON.parse(contents)
+<div class="flex min-h-(--app-h) flex-col gap-2">
+  <Setting icon={RobotIcon} title={m.ai_conversation()} moreOptions={() => promptOptions.show()}>
+    <List
+      icon={SparkleIcon}
+      title={m.prompt_template_count({ count: prompts.current.length })}
+      name={m.prompt_template()}
+      hint={m.ai_conversation_hint()}
+      bind:data={prompts.current}
+      oncreate={() => promptCreator.showModal()}
+      onimport={async () => {
+        try {
+          const path = await open({
+            multiple: false,
+            directory: false,
+            filters: [{ name: 'JSON', extensions: ['json'] }]
           });
+          if (path) {
+            const id = (await basename(path)).replace(/\.json$/i, '');
+            const contents = await readTextFile(path);
+            promptCreator.install({
+              id: id,
+              ...JSON.parse(contents)
+            });
+          }
+        } catch (error) {
+          console.error(`Failed to import prompt: ${error}`);
         }
-      } catch (error) {
-        console.error(`Failed to import prompt: ${error}`);
-      }
-    }}
-    onexport={async (items) => {
-      try {
-        if (await exportExtensions(items)) {
-          alert(m.export_success());
+      }}
+      onexport={async (items) => {
+        try {
+          if (await exportExtensions(items)) {
+            alert(m.export_success());
+          }
+        } catch (error) {
+          console.error(`Failed to export prompt: ${error}`);
+          alert({ level: 'error', message: m.export_failed() });
         }
-      } catch (error) {
-        console.error(`Failed to export prompt: ${error}`);
-        alert({ level: 'error', message: m.export_failed() });
-      }
-    }}
-  >
-    {#snippet row(item)}
-      {@const ProviderIcon = providerIcons[item.provider]}
-      <Icon icon={item.icon || 'Robot'} class="size-5" />
-      <div class="flex items-center gap-4 truncate list-col-grow" title={item.id}>
-        <span class="min-w-8 truncate text-base font-light">{item.id}</span>
-        <span class="badge min-w-14 truncate badge-ghost badge-sm" title={item.model}>
-          {#if ProviderIcon}
-            <ProviderIcon class="h-4 shrink-0" />
-          {:else}
-            <CubeIcon class="size-4 shrink-0 opacity-80" />
-          {/if}
-          <span class="truncate opacity-80">{item.model}</span>
-        </span>
-      </div>
-      <Button
-        icon={PencilSimpleLineIcon}
-        onclick={(event) => {
-          event.stopPropagation();
-          promptUpdater.showModal(item.id);
-        }}
-      />
-    {/snippet}
-  </List>
-</Setting>
+      }}
+    >
+      {#snippet row(item)}
+        {@const ProviderIcon = providerIcons[item.provider]}
+        <Icon icon={item.icon || 'Robot'} class="size-5" />
+        <div class="flex items-center gap-4 truncate list-col-grow" title={item.id}>
+          <span class="min-w-8 truncate text-base font-light">{item.id}</span>
+          <span class="badge min-w-14 truncate badge-ghost badge-sm" title={item.model}>
+            {#if ProviderIcon}
+              <ProviderIcon class="h-4 shrink-0" />
+            {:else}
+              <CubeIcon class="size-4 shrink-0 opacity-80" />
+            {/if}
+            <span class="truncate opacity-80">{item.model}</span>
+          </span>
+        </div>
+        <Button
+          icon={PencilSimpleLineIcon}
+          onclick={(event) => {
+            event.stopPropagation();
+            promptUpdater.showModal(item.id);
+          }}
+        />
+      {/snippet}
+    </List>
+  </Setting>
+</div>
 
 <Prompt bind:this={promptCreator} prompts={prompts.current} />
 <Prompt bind:this={promptUpdater} prompts={prompts.current} />

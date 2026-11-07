@@ -29,6 +29,7 @@
   import PaletteIcon from 'phosphor-svelte/lib/PaletteIcon';
   import RobotIcon from 'phosphor-svelte/lib/RobotIcon';
   import ScrollIcon from 'phosphor-svelte/lib/ScrollIcon';
+  import SelectionBackgroundIcon from 'phosphor-svelte/lib/SelectionBackgroundIcon';
   import SphereIcon from 'phosphor-svelte/lib/SphereIcon';
   import UploadIcon from 'phosphor-svelte/lib/UploadIcon';
   import type { Component, Snippet } from 'svelte';
@@ -389,6 +390,7 @@
       {@render menu(CodeIcon, m.script_execution(), resolve('/(main)/settings/script'))}
       {@render menu(MagnifyingGlassIcon, m.web_search(), resolve('/(main)/settings/searcher'))}
       <div class="divider my-0 opacity-50"></div>
+      {@render menu(SelectionBackgroundIcon, m.context_settings(), resolve('/(main)/settings/context'))}
       {@render menu(PaletteIcon, m.display_settings(), resolve('/(main)/settings/display'))}
       {@render menu(MouseLeftClickIcon, m.mouse_settings(), resolve('/(main)/settings/mouse'))}
       {@render menu(GearIcon, m.general_settings(), resolve('/(main)/settings/general'))}

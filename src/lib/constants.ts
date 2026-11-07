@@ -138,6 +138,16 @@ export const POPUP_FONT_SIZE = {
 };
 
 /**
+ * Maximum characters captured from the text around the selection.
+ */
+export const CONTEXT_TEXT_LIMIT = {
+  min: 200,
+  default: 1500,
+  max: 4000,
+  step: 100
+};
+
+/**
  * Popup window default size.
  */
 export const DEFAULT_POPUP_WINDOW_SIZE = {

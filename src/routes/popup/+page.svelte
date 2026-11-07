@@ -222,6 +222,7 @@
   import Button from '$lib/components/Button.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import Select from '$lib/components/Select.svelte';
+  import { composeContextBlock, contextParagraph as contextParagraphOf } from '$lib/context';
   import { renderTranslationPrompt } from '$lib/executor';
   import { NATURAL_CASES } from '$lib/matcher';
   import { m } from '$lib/paraglide/messages';
@@ -232,7 +233,9 @@
     popupOpacity,
     popupPinned,
     popupWindowSize,
-    prompts
+    prompts,
+    smartContextAutoInject,
+    smartContextDisplay
   } from '$lib/stores.svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { LogicalSize } from '@tauri-apps/api/dpi';
@@ -246,6 +249,7 @@
   import ArrowCounterClockwiseIcon from 'phosphor-svelte/lib/ArrowCounterClockwiseIcon';
   import ArrowLineDownLeftIcon from 'phosphor-svelte/lib/ArrowLineDownLeftIcon';
   import ArrowsLeftRightIcon from 'phosphor-svelte/lib/ArrowsLeftRightIcon';
+  import CaretDownIcon from 'phosphor-svelte/lib/CaretDownIcon';
   import ChatTeardropDotsIcon from 'phosphor-svelte/lib/ChatTeardropDotsIcon';
   import CopyIcon from 'phosphor-svelte/lib/CopyIcon';
   import PushPinIcon from 'phosphor-svelte/lib/PushPinIcon';
@@ -344,6 +348,13 @@
   let replyBox = $state(false);
   let userMessage = $state('');
   let userMessageInput: HTMLInputElement | null = $state(null);
+
+  // captured context panel state
+  let contextOpen = $state(false);
+  // only the surrounding text counts as context; the window title, page URL and application name
+  // are deliberately not shown or injected
+  let contextParagraph = $derived.by(() => contextParagraphOf(entry?.context));
+  let contextAvailable = $derived(contextParagraph.length > 0);
 
   /**
    * Apply persisted popup window size to native window.
@@ -491,8 +502,14 @@
       // build messages array
       const messages: ChatMessage[] = [];
 
-      // add system prompt
-      const systemPrompt = entry.systemPrompt?.trim();
+      // add system prompt; the context block is added here instead of during rendering so history
+      // records never carry window titles or surrounding text
+      const systemPrompt = [
+        entry.systemPrompt?.trim(),
+        smartContextAutoInject.current ? composeContextBlock(entry.context) : ''
+      ]
+        .filter(Boolean)
+        .join('\n\n');
       if (systemPrompt) {
         messages.push({ role: 'system', content: systemPrompt });
       }
@@ -710,6 +727,7 @@
       chatMessages = [];
       replyBox = false;
       userMessage = '';
+      contextOpen = false;
       translationText = data?.selection ?? '';
       sourceLanguage = '';
       targetLanguage = data?.translation?.targetLanguage ?? '';
@@ -864,6 +882,34 @@
           />
         </div>
       </div>
+      <!-- captured context chip: only rendered when there is surrounding text to expand -->
+      {#if promptMode && smartContextDisplay.current && contextAvailable}
+        <div class="shrink-0" style:background-color={contentBackgroundStyle}>
+          <div class="flex items-center px-3 py-1">
+            <button
+              class="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-field px-1 py-0.5 text-left transition-colors hover:bg-base-content/5"
+              aria-expanded={contextOpen}
+              onclick={() => (contextOpen = !contextOpen)}
+            >
+              <CaretDownIcon
+                class="size-3.5 shrink-0 opacity-50 transition-transform {contextOpen ? 'rotate-180' : ''}"
+              />
+              <span class="truncate text-xs font-medium tracking-wide opacity-70">
+                {m.context_available()}
+              </span>
+            </button>
+          </div>
+          {#if contextOpen}
+            <div class="px-3 pb-2 text-xs opacity-70">
+              <div
+                class="max-h-32 overflow-auto rounded-box border border-base-content/10 px-2 py-1 whitespace-pre-wrap"
+              >
+                {contextParagraph}
+              </div>
+            </div>
+          {/if}
+        </div>
+      {/if}
       <!-- popup window body -->
       <div
         class="min-h-0 flex-1 overflow-auto bg-base-100"
