@@ -223,7 +223,7 @@
   import Icon from '$lib/components/Icon.svelte';
   import Select from '$lib/components/Select.svelte';
   import { appName, composeContextBlock, hasContext } from '$lib/context';
-  import { renderPrompt, renderTranslationPrompt } from '$lib/executor';
+  import { renderTranslationPrompt } from '$lib/executor';
   import { NATURAL_CASES } from '$lib/matcher';
   import { m } from '$lib/paraglide/messages';
   import {
@@ -234,7 +234,8 @@
     popupPinned,
     popupWindowSize,
     prompts,
-    smartContextAutoInject
+    smartContextAutoInject,
+    smartContextDisplay
   } from '$lib/stores.svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { LogicalSize } from '@tauri-apps/api/dpi';
@@ -433,36 +434,6 @@
 
     Object.assign(entry, rendered, { selection });
     renderedTranslation = translationKey;
-    await chat(undefined, true);
-  }
-
-  /**
-   * Drop the captured context from this popup and regenerate the response without it.
-   *
-   * Templates that reference context variables are re-rendered so the removed context does not
-   * survive in the request.
-   */
-  async function removeContext() {
-    if (!entry || streaming) {
-      return;
-    }
-    entry.context = undefined;
-    contextOpen = false;
-    if (entry.translation) {
-      const rendered = await renderTranslationPrompt(
-        { ...entry, selection: translationText },
-        { ...entry.translation, targetLanguage },
-        sourceLanguage
-      );
-      Object.assign(entry, rendered);
-      renderedTranslation = JSON.stringify([translationText, sourceLanguage, targetLanguage]);
-    } else if (entry.actionType === 'prompt') {
-      const prompt = prompts.current.find((p) => p.id === entry?.actionLabel);
-      if (prompt) {
-        entry.result = renderPrompt(prompt.prompt, entry);
-        entry.systemPrompt = renderPrompt(prompt.systemPrompt || '', entry);
-      }
-    }
     await chat(undefined, true);
   }
 
@@ -920,9 +891,9 @@
         </div>
       </div>
       <!-- captured context chip -->
-      {#if promptMode && contextInfo}
-        <div class="shrink-0 border-b border-base-content/10 bg-base-200/60">
-          <div class="flex items-center gap-1 px-2 py-1">
+      {#if promptMode && contextInfo && smartContextDisplay.current}
+        <div class="shrink-0" style:background-color={contentBackgroundStyle}>
+          <div class="flex items-center px-3 py-1">
             <button
               class="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-field px-1 py-0.5 text-left transition-colors hover:bg-base-content/5"
               aria-expanded={contextOpen}
@@ -936,13 +907,6 @@
                 {[contextInfo.app, contextInfo.title].filter(Boolean).join(' · ')}
               </span>
             </button>
-            <Button
-              icon={XIcon}
-              text={m.context_remove()}
-              iconClass="opacity-50"
-              disabled={streaming}
-              onclick={() => void removeContext()}
-            />
           </div>
           {#if contextOpen}
             <div class="space-y-1 px-3 pb-2 text-xs opacity-70">

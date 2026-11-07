@@ -364,6 +364,9 @@ export const smartContextLimit = persisted<number>('smartContextLimit', CONTEXT_
 // whether captured context is appended to the system prompt automatically
 export const smartContextAutoInject = persisted<boolean>('smartContextAutoInject', true);
 
+// whether the captured context is shown above the AI response in the popup
+export const smartContextDisplay = persisted<boolean>('smartContextDisplay', true);
+
 // shortcut trigger records
 export const entries = persisted<Entry[]>('entries', []);
 

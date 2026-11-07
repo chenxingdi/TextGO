@@ -10,8 +10,7 @@
   import Modal from '$lib/components/Modal.svelte';
   import Prompt from '$lib/components/Prompt.svelte';
   import Setting from '$lib/components/Setting.svelte';
-  import Toggle from '$lib/components/Toggle.svelte';
-  import { CONTEXT_TEXT_LIMIT, LLM_PROVIDERS } from '$lib/constants';
+  import { LLM_PROVIDERS } from '$lib/constants';
   import { buildFormSchema } from '$lib/constraint';
   import { exportExtensions } from '$lib/helpers';
   import { Anthropic, Gemini, LMStudio, Ollama, OpenAI, OpenRouter, XAI } from '$lib/icons';
@@ -26,9 +25,6 @@
     openrouterApiKey,
     prompts,
     providers,
-    smartContext,
-    smartContextAutoInject,
-    smartContextLimit,
     xaiApiKey
   } from '$lib/stores.svelte';
   import type { CustomLLMProvider, LLMProvider } from '$lib/types';
@@ -41,7 +37,6 @@
   import PencilSimpleLineIcon from 'phosphor-svelte/lib/PencilSimpleLineIcon';
   import PlusIcon from 'phosphor-svelte/lib/PlusIcon';
   import RobotIcon from 'phosphor-svelte/lib/RobotIcon';
-  import SelectionBackgroundIcon from 'phosphor-svelte/lib/SelectionBackgroundIcon';
   import SlidersHorizontalIcon from 'phosphor-svelte/lib/SlidersHorizontalIcon';
   import SparkleIcon from 'phosphor-svelte/lib/SparkleIcon';
   import TrashIcon from 'phosphor-svelte/lib/TrashIcon';
@@ -228,34 +223,6 @@
         />
       {/snippet}
     </List>
-  </Setting>
-
-  <Setting icon={SelectionBackgroundIcon} title={m.context_settings()} tip={m.context_settings_hint()}>
-    <fieldset class="flex items-center justify-between gap-1">
-      <Label tip={m.context_enable_tip()} tipPlacement="duplex">{m.context_enable()}</Label>
-      <Toggle bind:value={smartContext.current} />
-    </fieldset>
-    <div class="divider my-0 opacity-60"></div>
-    <fieldset class="flex items-center justify-between gap-1">
-      <Label inline tip={m.context_paragraph_limit_tip()} tipPlacement="duplex">
-        {m.context_paragraph_limit()}
-        <span class="ml-1 text-xs opacity-70">{smartContextLimit.current}</span>
-      </Label>
-      <input
-        class="range max-w-2/5 text-emphasis range-xs"
-        type="range"
-        min={CONTEXT_TEXT_LIMIT.min}
-        max={CONTEXT_TEXT_LIMIT.max}
-        step={CONTEXT_TEXT_LIMIT.step}
-        disabled={!smartContext.current}
-        bind:value={smartContextLimit.current}
-      />
-    </fieldset>
-    <div class="divider my-0 opacity-60"></div>
-    <fieldset class="flex items-center justify-between gap-1">
-      <Label tip={m.context_auto_inject_tip()} tipPlacement="duplex">{m.context_auto_inject()}</Label>
-      <Toggle bind:value={smartContextAutoInject.current} disabled={!smartContext.current} />
-    </fieldset>
   </Setting>
 </div>
 
