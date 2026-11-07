@@ -11,8 +11,6 @@ on:
 jobs:
   check-and-build:
     runs-on: windows-latest
-    permissions:
-      contents: write
     env:
       NODE_OPTIONS: --max_old_space_size=4096
 
@@ -44,27 +42,10 @@ jobs:
       - name: compile messages
         run: npx paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide
 
+      # -A deprecated keeps the gate useful: stable rustc 1.99 deprecates a std method that the
+      # upstream code still calls, which is unrelated to this branch. Everything else must be clean.
       - name: lint rust
-        id: clippy
-        shell: bash
-        continue-on-error: true
-        run: |
-          cargo clippy --manifest-path ./src-tauri/Cargo.toml --all-targets --message-format=short > clippy.log 2>&1
-          echo "status=$?" >> "$GITHUB_OUTPUT"
-          echo "warnings: $(grep -c 'warning:' clippy.log)" >> "$GITHUB_OUTPUT"
-          cat clippy.log
-
-      # the run log needs a login, so publish the raw output inside the branch
-      - name: publish clippy log
-        if: always()
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          cp clippy.log ci-clippy.log
-          git add -f ci-clippy.log
-          git commit -m "ci: clippy diagnostics [skip ci]" || true
-          git push origin HEAD:${GITHUB_REF_NAME} || true
+        run: cargo clippy --manifest-path ./src-tauri/Cargo.toml --all-targets -- -D warnings -A deprecated
 
       - name: run rust tests
         run: cargo test --manifest-path ./src-tauri/Cargo.toml --lib

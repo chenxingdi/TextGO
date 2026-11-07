@@ -146,7 +146,7 @@ pub fn is_browser(app_id: &str) -> bool {
     // "chrome" and "com.google.Chrome" keeps a "chrome" segment, so exact matches are enough
     app_id
         .to_lowercase()
-        .split(|c: char| c == '/' || c == '\\' || c == '.')
+        .split(['/', '\\', '.'])
         .any(|segment| BROWSER_IDS.contains(&segment))
 }
 
