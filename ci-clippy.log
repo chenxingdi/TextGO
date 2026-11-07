@@ -1,7 +1,0 @@
-[1m[92m    Updating[0m crates.io index
-[1m[92m   Compiling[0m TextGO v1.0.3 (D:\a\TextGO\TextGO\src-tauri)
-src\commands\selection.rs:221:18: [1m[93mwarning[0m: use of deprecated method `std::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
-src\platform.rs:149:16: [1m[93mwarning[0m: this manual char comparison can be written more succinctly: help: consider using an array of `char`: `['/', '\\', '.']`
-[1m[93mwarning[0m: `TextGO` (lib test) generated 2 warnings (2 duplicates)
-[1m[93mwarning[0m: `TextGO` (lib) generated 2 warnings (run `cargo clippy --fix --lib -p TextGO -- ` to apply 2 suggestions)
-[1m[92m    Finished[0m `dev` profile [unoptimized + debuginfo] target(s) in 44.01s
