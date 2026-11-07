@@ -222,7 +222,8 @@
   import Button from '$lib/components/Button.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import Select from '$lib/components/Select.svelte';
-  import { renderTranslationPrompt } from '$lib/executor';
+  import { appName, composeContextBlock, hasContext } from '$lib/context';
+  import { renderPrompt, renderTranslationPrompt } from '$lib/executor';
   import { NATURAL_CASES } from '$lib/matcher';
   import { m } from '$lib/paraglide/messages';
   import {
@@ -232,7 +233,8 @@
     popupOpacity,
     popupPinned,
     popupWindowSize,
-    prompts
+    prompts,
+    smartContextAutoInject
   } from '$lib/stores.svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { LogicalSize } from '@tauri-apps/api/dpi';
@@ -246,6 +248,7 @@
   import ArrowCounterClockwiseIcon from 'phosphor-svelte/lib/ArrowCounterClockwiseIcon';
   import ArrowLineDownLeftIcon from 'phosphor-svelte/lib/ArrowLineDownLeftIcon';
   import ArrowsLeftRightIcon from 'phosphor-svelte/lib/ArrowsLeftRightIcon';
+  import CaretDownIcon from 'phosphor-svelte/lib/CaretDownIcon';
   import ChatTeardropDotsIcon from 'phosphor-svelte/lib/ChatTeardropDotsIcon';
   import CopyIcon from 'phosphor-svelte/lib/CopyIcon';
   import PushPinIcon from 'phosphor-svelte/lib/PushPinIcon';
@@ -345,6 +348,21 @@
   let userMessage = $state('');
   let userMessageInput: HTMLInputElement | null = $state(null);
 
+  // captured context panel state
+  let contextOpen = $state(false);
+  let contextInfo = $derived.by(() => {
+    const context = entry?.context;
+    if (!hasContext(context)) {
+      return null;
+    }
+    return {
+      title: context?.title?.trim() ?? '',
+      app: appName(context?.appId),
+      url: context?.url?.trim() ?? '',
+      paragraph: context?.paragraph?.trim() ?? ''
+    };
+  });
+
   /**
    * Apply persisted popup window size to native window.
    */
@@ -415,6 +433,36 @@
 
     Object.assign(entry, rendered, { selection });
     renderedTranslation = translationKey;
+    await chat(undefined, true);
+  }
+
+  /**
+   * Drop the captured context from this popup and regenerate the response without it.
+   *
+   * Templates that reference context variables are re-rendered so the removed context does not
+   * survive in the request.
+   */
+  async function removeContext() {
+    if (!entry || streaming) {
+      return;
+    }
+    entry.context = undefined;
+    contextOpen = false;
+    if (entry.translation) {
+      const rendered = await renderTranslationPrompt(
+        { ...entry, selection: translationText },
+        { ...entry.translation, targetLanguage },
+        sourceLanguage
+      );
+      Object.assign(entry, rendered);
+      renderedTranslation = JSON.stringify([translationText, sourceLanguage, targetLanguage]);
+    } else if (entry.actionType === 'prompt') {
+      const prompt = prompts.current.find((p) => p.id === entry?.actionLabel);
+      if (prompt) {
+        entry.result = renderPrompt(prompt.prompt, entry);
+        entry.systemPrompt = renderPrompt(prompt.systemPrompt || '', entry);
+      }
+    }
     await chat(undefined, true);
   }
 
@@ -491,8 +539,14 @@
       // build messages array
       const messages: ChatMessage[] = [];
 
-      // add system prompt
-      const systemPrompt = entry.systemPrompt?.trim();
+      // add system prompt; the context block is added here instead of during rendering so history
+      // records never carry window titles or surrounding text
+      const systemPrompt = [
+        entry.systemPrompt?.trim(),
+        smartContextAutoInject.current ? composeContextBlock(entry.context) : ''
+      ]
+        .filter(Boolean)
+        .join('\n\n');
       if (systemPrompt) {
         messages.push({ role: 'system', content: systemPrompt });
       }
@@ -710,6 +764,7 @@
       chatMessages = [];
       replyBox = false;
       userMessage = '';
+      contextOpen = false;
       translationText = data?.selection ?? '';
       sourceLanguage = '';
       targetLanguage = data?.translation?.targetLanguage ?? '';
@@ -864,6 +919,61 @@
           />
         </div>
       </div>
+      <!-- captured context chip -->
+      {#if promptMode && contextInfo}
+        <div class="shrink-0 border-b border-base-content/10 bg-base-200/60">
+          <div class="flex items-center gap-1 px-2 py-1">
+            <button
+              class="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-field px-1 py-0.5 text-left transition-colors hover:bg-base-content/5"
+              aria-expanded={contextOpen}
+              onclick={() => (contextOpen = !contextOpen)}
+            >
+              <CaretDownIcon
+                class="size-3.5 shrink-0 opacity-50 transition-transform {contextOpen ? 'rotate-180' : ''}"
+              />
+              <span class="shrink-0 text-xs font-medium tracking-wide opacity-70">{m.context_enhancement()}</span>
+              <span class="truncate text-xs opacity-50">
+                {[contextInfo.app, contextInfo.title].filter(Boolean).join(' · ')}
+              </span>
+            </button>
+            <Button
+              icon={XIcon}
+              text={m.context_remove()}
+              iconClass="opacity-50"
+              disabled={streaming}
+              onclick={() => void removeContext()}
+            />
+          </div>
+          {#if contextOpen}
+            <div class="space-y-1 px-3 pb-2 text-xs opacity-70">
+              {#if contextInfo.title}
+                <div class="truncate" title={contextInfo.title}>
+                  <span class="opacity-60">{m.context_variable_title()}</span>
+                  <span class="mx-1 opacity-40">·</span>
+                  {contextInfo.title}
+                </div>
+              {/if}
+              {#if contextInfo.url}
+                <div class="truncate" title={contextInfo.url}>
+                  <span class="opacity-60">{m.context_variable_url()}</span>
+                  <span class="mx-1 opacity-40">·</span>
+                  {contextInfo.url}
+                </div>
+              {/if}
+              {#if contextInfo.paragraph}
+                <div
+                  class="max-h-32 overflow-auto rounded-box border border-base-content/10 px-2 py-1 whitespace-pre-wrap"
+                >
+                  {contextInfo.paragraph}
+                </div>
+              {/if}
+              <div class="text-[0.7rem] opacity-60">
+                {smartContextAutoInject.current ? m.context_auto_inject_hint() : m.context_variables_hint()}
+              </div>
+            </div>
+          {/if}
+        </div>
+      {/if}
       <!-- popup window body -->
       <div
         class="min-h-0 flex-1 overflow-auto bg-base-100"

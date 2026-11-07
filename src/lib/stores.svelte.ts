@@ -1,4 +1,5 @@
 import {
+  CONTEXT_TEXT_LIMIT,
   DEFAULT_POPUP_WINDOW_SIZE,
   POPUP_CORNER_RADIUS,
   POPUP_FONT_SIZE,
@@ -343,6 +344,25 @@ export const iBeamCursor = persisted<boolean>('iBeamCursor', true, {
     invoke('set_ibeam_cursor_enabled', { enabled });
   }
 });
+
+// whether to capture context around the selection and inject it into AI requests
+export const smartContext = persisted<boolean>('smartContext', false, {
+  onchange: (enabled) => {
+    invoke('set_context_limit', { limit: enabled ? smartContextLimit.current : 0 });
+  }
+});
+
+// maximum characters captured from the text around the selection
+export const smartContextLimit = persisted<number>('smartContextLimit', CONTEXT_TEXT_LIMIT.default, {
+  onchange: (limit) => {
+    if (smartContext.current) {
+      invoke('set_context_limit', { limit });
+    }
+  }
+});
+
+// whether captured context is appended to the system prompt automatically
+export const smartContextAutoInject = persisted<boolean>('smartContextAutoInject', true);
 
 // shortcut trigger records
 export const entries = persisted<Entry[]>('entries', []);

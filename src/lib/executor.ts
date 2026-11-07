@@ -1,9 +1,20 @@
 import { PROMPT_MARK, SCRIPT_MARK, SEARCHER_MARK } from '$lib/constants';
+import { appName } from '$lib/context';
 import { isMouseShortcut } from '$lib/helpers';
 import { guessNaturalLanguage, NATURAL_CASES } from '$lib/matcher';
 import { m } from '$lib/paraglide/messages';
-import { denoPath, entries, historySize, nodePath, prompts, pythonPath, scripts, searchers } from '$lib/stores.svelte';
-import type { Entry, Processor, Rule, Script, TranslationPrompt, WindowPlacement } from '$lib/types';
+import {
+  denoPath,
+  entries,
+  historySize,
+  nodePath,
+  prompts,
+  pythonPath,
+  scripts,
+  searchers,
+  smartContext
+} from '$lib/stores.svelte';
+import type { Entry, Processor, Rule, Script, SelectionContext, TranslationPrompt, WindowPlacement } from '$lib/types';
 import { invoke } from '@tauri-apps/api/core';
 import { openPath, openUrl } from '@tauri-apps/plugin-opener';
 import { memoize } from 'es-toolkit/function';
@@ -356,6 +367,14 @@ const promptExecutor: Executor = async (rule, entry, placement, isCurrent = () =
   }
 
   console.debug(`Generating prompt: ${promptId}`);
+  if (smartContext.current) {
+    entry.context = await captureContext();
+  } else {
+    entry.context = undefined;
+  }
+  if (!isCurrent()) {
+    return true;
+  }
   if (prompt.targetLanguage) {
     entry.translation = {
       prompt: prompt.prompt,
@@ -598,6 +617,22 @@ async function executeScript(script: Script, entry: Entry): Promise<Result> {
 }
 
 /**
+ * Read the context captured by the backend when the selection was made.
+ *
+ * @returns captured context, or undefined when nothing usable was captured
+ */
+async function captureContext(): Promise<SelectionContext | undefined> {
+  try {
+    const context = await invoke<SelectionContext>('get_selection_context');
+    const empty = !context || (!context.title && !context.url && !context.paragraph);
+    return empty ? undefined : context;
+  } catch (error) {
+    console.error(`Failed to read selection context: ${error}`);
+    return undefined;
+  }
+}
+
+/**
  * Render the input prompt and return the result.
  *
  * @param template - prompt template
@@ -615,6 +650,10 @@ export function renderPrompt(template: string, entry: Entry, sourceLanguage = ''
   result = result.replace(/\{\{datetime\}\}/g, entry.datetime);
   result = result.replace(/\{\{sourceLanguage\}\}/g, sourceLanguage);
   result = result.replace(/\{\{targetLanguage\}\}/g, targetLanguage);
+  result = result.replace(/\{\{context\}\}/g, entry.context?.paragraph ?? '');
+  result = result.replace(/\{\{title\}\}/g, entry.context?.title ?? '');
+  result = result.replace(/\{\{url\}\}/g, entry.context?.url ?? '');
+  result = result.replace(/\{\{app\}\}/g, appName(entry.context?.appId));
 
   return result;
 }
@@ -622,10 +661,15 @@ export function renderPrompt(template: string, entry: Entry, sourceLanguage = ''
 /**
  * Save entry to history.
  *
+ * The captured context is deliberately left out: window titles and surrounding text can contain
+ * private information and are not needed to replay a record.
+ *
  * @param entry - record object to save
  */
 function saveHistory(entry: Entry): void {
-  entries.current.unshift(entry);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { context: _context, ...record } = entry;
+  entries.current.unshift(record);
   // remove excess records
   if (entries.current.length > historySize.current) {
     entries.current = entries.current.slice(0, historySize.current);

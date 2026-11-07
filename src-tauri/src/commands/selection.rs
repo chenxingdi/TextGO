@@ -6,9 +6,11 @@ use crate::commands::clipboard::{clipboard_sequence, CLIPBOARD_CONSUMED_SEQUENCE
 use crate::commands::keyboard::send_copy_keys;
 use crate::commands::shortcut::ShortcutHandlerGuard;
 use crate::error::AppError;
-use crate::platform;
-use crate::{FORCE_GET_SELECTION, SELECTION_TEXT_CACHE};
-use log::warn;
+use crate::platform::{self, SelectionContext};
+use crate::{
+    CONTEXT_LIMIT, FORCE_GET_SELECTION, SELECTION_CONTEXT_CACHE, SELECTION_TEXT_CACHE,
+};
+use log::{debug, warn};
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(target_os = "windows")]
 use std::time::Instant;
@@ -37,6 +39,11 @@ pub async fn get_selection(app: AppHandle, mouse: Option<bool>) -> Result<String
     // suspend shortcut handling to avoid interference
     let _guard = ShortcutHandlerGuard::suspend();
 
+    // drop the context of the previous selection before looking up the new one
+    if let Ok(mut cache) = SELECTION_CONTEXT_CACHE.lock() {
+        *cache = None;
+    }
+
     // try using platform native API to get selected text first
     if let Ok(text) = platform::get_selection() {
         if !text.is_empty() {
@@ -45,7 +52,7 @@ pub async fn get_selection(app: AppHandle, mouse: Option<bool>) -> Result<String
                 *cache = None;
             }
 
-            return Ok(text);
+            return Ok(with_context(text));
         }
     }
 
@@ -56,7 +63,63 @@ pub async fn get_selection(app: AppHandle, mouse: Option<bool>) -> Result<String
 
     // if native API fails, fall back to clipboard method
     warn!("Failed to get selection natively, fallback to clipboard method");
-    get_selection_fallback(app, mouse.unwrap_or(false)).await
+    let text = get_selection_fallback(app, mouse.unwrap_or(false)).await?;
+    Ok(with_context(text))
+}
+
+/// Capture the context of the current selection before returning the text to the frontend.
+///
+/// The source application still owns focus here, which the window title and surrounding text both
+/// depend on; the popup only opens after this command resolves.
+///
+/// @param text - selected text that was just obtained
+/// @returns the same text, unchanged
+fn with_context(text: String) -> String {
+    capture_context();
+    text
+}
+
+/// Capture the surrounding context of the focused selection while the source application still
+/// owns focus, and remember it for the popup that is about to open.
+///
+/// The capture is best-effort: failures only leave the context empty and never block the selection.
+fn capture_context() {
+    let limit = CONTEXT_LIMIT.load(Ordering::Relaxed);
+    if limit == 0 {
+        return;
+    }
+
+    match platform::get_selection_context(limit) {
+        Ok(context) => {
+            debug!("Captured selection context from {:?}", context.app_id);
+            if let Ok(mut cache) = SELECTION_CONTEXT_CACHE.lock() {
+                *cache = Some(context);
+            }
+        }
+        Err(error) => debug!("Failed to capture selection context: {}", error),
+    }
+}
+
+/// Get the context captured together with the current selection.
+///
+/// @returns captured context, or empty fields when nothing was captured
+#[tauri::command]
+pub fn get_selection_context() -> Result<SelectionContext, AppError> {
+    Ok(SELECTION_CONTEXT_CACHE
+        .lock()
+        .ok()
+        .and_then(|cache| cache.as_ref().cloned())
+        .unwrap_or_default())
+}
+
+/// Set the maximum number of characters captured from around the selection.
+///
+/// @param limit - character limit; zero disables context capture
+#[tauri::command]
+pub fn set_context_limit(limit: usize) -> Result<(), AppError> {
+    let limit = limit.clamp(0, platform::CONTEXT_TEXT_LIMIT_MAX);
+    CONTEXT_LIMIT.store(limit, Ordering::Relaxed);
+    Ok(())
 }
 
 /// Get selected text through clipboard.

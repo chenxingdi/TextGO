@@ -16,6 +16,12 @@ ${m.prompt_variables_tip()}
 {{targetLanguage}} - ${m.target_language()}
 `;
 
+  const CONTEXT_PLACEHOLDER = `{{context}} - ${m.context_variable_paragraph()}
+{{title}} - ${m.context_variable_title()}
+{{url}} - ${m.context_variable_url()}
+{{app}} - ${m.context_variable_app()}
+`;
+
   // form schema
   const schema = buildFormSchema(({ text, number, range }) => ({
     name: text().maxlength(64),
@@ -75,8 +81,9 @@ ${m.prompt_variables_tip()}
   let topP: number | undefined = $state(DEFAULT_TOP_P);
   let customParamsJson = $state('{}');
   let customParamsEditor: CodeMirror;
-  let promptPlaceholder = $derived(`${PROMPT_PLACEHOLDER}${translationMode ? TRANSLATION_PLACEHOLDER : ''}`);
-
+  let promptPlaceholder = $derived(
+    `${PROMPT_PLACEHOLDER}${CONTEXT_PLACEHOLDER}${translationMode ? TRANSLATION_PLACEHOLDER : ''}`
+  );
   // fill form fields
   const fillForm = (prompt: Prompt) => {
     promptName = prompt.id;

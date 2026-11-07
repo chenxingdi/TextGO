@@ -1,4 +1,7 @@
 use crate::error::AppError;
+use crate::platform::{
+    is_browser, paragraph_around, SelectionContext, CONTEXT_WINDOW_RADIUS,
+};
 use core_foundation::array::CFArray;
 use core_foundation::base::{CFRange, CFType, CFTypeRef, TCFType};
 use core_foundation::string::{CFString, CFStringRef};
@@ -447,6 +450,137 @@ pub fn get_selection() -> Result<String, AppError> {
 
     // if not found, return empty string
     Ok(String::new())
+}
+
+/// Capture the title, identifier, website and surrounding text of the current selection.
+///
+/// @param limit - maximum number of characters kept from the text around the selection
+/// @returns best-effort context; parts that cannot be read stay empty
+pub fn get_selection_context(limit: usize) -> Result<SelectionContext, AppError> {
+    let mut context = SelectionContext {
+        app_id: get_frontmost_app_id().unwrap_or_default(),
+        ..SelectionContext::default()
+    };
+
+    // window title of the frontmost window
+    context.title = get_frontmost_window_title().unwrap_or_default();
+
+    // text around the selection; retry once after enabling AXAPI for Chromium and Electron apps
+    let focused_element = match get_focused_element() {
+        Ok(element) => Some(element),
+        Err(_) => {
+            let _ = enable_axapi_for_special_apps();
+            get_focused_element().ok()
+        }
+    };
+    if let Some(element) = focused_element {
+        if let Ok(selected_range) = get_selected_range(&element) {
+            context.paragraph =
+                read_around_range(&element, selected_range, limit).unwrap_or_default();
+        }
+    }
+
+    // the address bar lookup is only meaningful in browsers and is comparatively slow
+    if is_browser(&context.app_id) {
+        context.url = get_frontmost_url().unwrap_or_default();
+    }
+
+    Ok(context)
+}
+
+/// Get the title of the focused window of the frontmost application.
+///
+/// @returns trimmed window title, or none when it is unavailable
+fn get_frontmost_window_title() -> Option<String> {
+    unsafe {
+        if !AXIsProcessTrusted() {
+            return None;
+        }
+
+        let pid = get_frontmost_app_pid()?;
+        let app_ptr = AXUIElementCreateApplication(pid);
+        if app_ptr.is_null() {
+            return None;
+        }
+        let app = CFType::wrap_under_create_rule(app_ptr);
+        let focused_window = get_element_attribute(&app, "AXFocusedWindow").ok()?;
+        let title = get_element_attribute(&focused_window, "AXTitle").ok()?;
+        let title = title.downcast::<CFString>()?;
+        let title = title.to_string();
+        let title = title.trim();
+        if title.is_empty() {
+            None
+        } else {
+            Some(title.to_string())
+        }
+    }
+}
+
+/// Read the text around a selection range.
+///
+/// The window is centered on the selection and then trimmed to the enclosing paragraph. Some
+/// controls reject ranges that extend past their text, so the window shrinks until it is accepted.
+///
+/// @param element - focused accessibility element
+/// @param selected_range - range of the current selection
+/// @param limit - maximum number of characters kept from the resulting text
+/// @returns text around the selection, or none when the element exposes no text
+fn read_around_range(element: &CFType, selected_range: CFRange, limit: usize) -> Option<String> {
+    let selection = get_string_for_range(element, selected_range).ok()?;
+
+    let mut radius = CONTEXT_WINDOW_RADIUS;
+    loop {
+        let start = (selected_range.location - radius as isize).max(0);
+        let end = selected_range.location + selected_range.length + radius as isize;
+        let window = CFRange {
+            location: start,
+            length: (end - start).max(0),
+        };
+
+        if let Ok(text) = get_string_for_range(element, window) {
+            if text.trim().is_empty() {
+                return None;
+            }
+            return Some(paragraph_around(&text, selection.trim(), limit));
+        }
+
+        if radius == 0 {
+            return None;
+        }
+        radius /= 2;
+    }
+}
+
+/// Read a string from a parameterized text range of an accessibility element.
+///
+/// @param element - accessibility element exposing the text
+/// @param range - character range to read
+/// @returns text for the range
+fn get_string_for_range(element: &CFType, range: CFRange) -> Result<String, AppError> {
+    unsafe {
+        let range_ptr = AXValueCreate(AX_VALUE_TYPE_CF_RANGE, &range as *const _ as _);
+        if range_ptr.is_null() {
+            return Err("Failed to create range AXValue".into());
+        }
+        let range_value = CFType::wrap_under_create_rule(range_ptr);
+
+        let mut value_ptr: CFTypeRef = std::ptr::null();
+        let error_code = AXUIElementCopyParameterizedAttributeValue(
+            element.as_CFTypeRef(),
+            CFString::new("AXStringForRange").as_concrete_TypeRef(),
+            range_value.as_CFTypeRef(),
+            &mut value_ptr,
+        );
+        if error_code != 0 || value_ptr.is_null() {
+            return Err(format!("Failed to read text for range, error code: {}", error_code).into());
+        }
+
+        let value = CFType::wrap_under_create_rule(value_ptr);
+        value
+            .downcast::<CFString>()
+            .map(|text| text.to_string())
+            .ok_or_else(|| "Range value is not a string".into())
+    }
 }
 
 /// Get the coordinates of the bottom-right corner of the selected text.

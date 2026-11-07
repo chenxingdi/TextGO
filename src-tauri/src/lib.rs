@@ -11,7 +11,7 @@ use handlers::{handle_keyboard_event, handle_mouse_event};
 use log::LevelFilter;
 use rdev::listen;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
 use tauri::{App, AppHandle, Emitter, Manager, RunEvent, WebviewWindow, WindowEvent};
@@ -79,8 +79,15 @@ pub static CLIPBOARD_RESTORE_INTERRUPTED: AtomicBool = AtomicBool::new(false);
 pub static SELECTION_TEXT_CACHE: LazyLock<Mutex<Option<(String, Instant)>>> =
     LazyLock::new(|| Mutex::new(None));
 
+// context captured while the source application still owned focus; replaced on every new selection
+pub static SELECTION_CONTEXT_CACHE: LazyLock<Mutex<Option<platform::SelectionContext>>> =
+    LazyLock::new(|| Mutex::new(None));
+
 // global force get selection state (clipboard fallback)
 pub static FORCE_GET_SELECTION: AtomicBool = AtomicBool::new(true);
+
+// maximum characters captured from around the selection; zero disables capture
+pub static CONTEXT_LIMIT: AtomicUsize = AtomicUsize::new(0);
 
 // global copy key setting (true = Ctrl+C, false = Ctrl+Insert)
 pub static USE_CTRL_C: AtomicBool = AtomicBool::new(false);
@@ -212,6 +219,8 @@ pub fn run() {
             set_force_get_selection,
             set_copy_key,
             get_selection,
+            get_selection_context,
+            set_context_limit,
             get_clipboard_text,
             set_clipboard_text,
             clear_clipboard,
@@ -246,6 +255,26 @@ fn setup_app(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     // store app handle globally
     if let Ok(mut handle) = APP_HANDLE.lock() {
         *handle = Some(app_handle.clone());
+    }
+
+    // load the context capture limit before any selection can be made, including when the main
+    // window stays hidden in the tray and therefore never syncs it
+    if let Ok(store) = app.store(SETTINGS_STORE) {
+        let enabled = store
+            .get("smartContext")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        let limit = store
+            .get("smartContextLimit")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(platform::CONTEXT_TEXT_LIMIT_DEFAULT as u64);
+        let limit = if enabled {
+            (limit as usize)
+                .clamp(platform::CONTEXT_TEXT_LIMIT_MIN, platform::CONTEXT_TEXT_LIMIT_MAX)
+        } else {
+            0
+        };
+        CONTEXT_LIMIT.store(limit, Ordering::Relaxed);
     }
 
     // start mouse event listener

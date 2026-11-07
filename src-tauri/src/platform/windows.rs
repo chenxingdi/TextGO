@@ -1,4 +1,7 @@
 use crate::error::AppError;
+use crate::platform::{
+    clip_around_selection, is_browser, paragraph_around, SelectionContext, CONTEXT_WINDOW_RADIUS,
+};
 use std::fs;
 use std::path::Path;
 use windows::core::{Interface, Owned, PWSTR};
@@ -12,13 +15,15 @@ use windows::Win32::System::Threading::{
 use windows::Win32::UI::Accessibility::{
     CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationLegacyIAccessiblePattern,
     IUIAutomationTextPattern, IUIAutomationTextRange, IUIAutomationValuePattern,
-    TextPatternRangeEndpoint_Start, TextUnit_Character, TreeScope_Descendants,
-    UIA_ControlTypePropertyId, UIA_DocumentControlTypeId, UIA_EditControlTypeId,
-    UIA_LegacyIAccessiblePatternId, UIA_TextPatternId, UIA_ValuePatternId,
+    TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start, TextUnit_Character,
+    TextUnit_Paragraph, TreeScope_Descendants, UIA_ControlTypePropertyId,
+    UIA_DocumentControlTypeId, UIA_EditControlTypeId, UIA_LegacyIAccessiblePatternId,
+    UIA_TextPatternId, UIA_ValuePatternId,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetCursorInfo, GetForegroundWindow, GetWindowThreadProcessId, LoadCursorW, SetForegroundWindow,
-    CURSORINFO, CURSOR_SHOWING, IDC_IBEAM,
+    GetCursorInfo, GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW,
+    GetWindowThreadProcessId, LoadCursorW, SetForegroundWindow, CURSORINFO, CURSOR_SHOWING,
+    IDC_IBEAM,
 };
 use windows::UI::ViewManagement::UISettings;
 
@@ -182,6 +187,140 @@ pub fn get_selection() -> Result<String, AppError> {
             .map_err(|_| "Failed to get text from selection")?;
 
         Ok(text.to_string())
+    }
+}
+
+/// Capture the title, identifier, website and surrounding text of the current selection.
+///
+/// @param limit - maximum number of characters kept from the text around the selection
+/// @returns best-effort context; parts that cannot be read stay empty
+pub fn get_selection_context(limit: usize) -> Result<SelectionContext, AppError> {
+    unsafe {
+        // initialize COM
+        let _com = ComGuard::new()?;
+
+        let mut context = SelectionContext {
+            app_id: get_frontmost_app_id().unwrap_or_default(),
+            ..SelectionContext::default()
+        };
+
+        // window title of the foreground window
+        let window = GetForegroundWindow();
+        if !window.is_invalid() {
+            context.title = get_window_title(window).unwrap_or_default();
+        }
+
+        // text around the selection
+        context.paragraph = read_selected_paragraph(limit).unwrap_or_default();
+
+        // the address bar lookup is only meaningful in browsers and is comparatively slow
+        if is_browser(&context.app_id) {
+            context.url = get_frontmost_url().unwrap_or_default();
+        }
+
+        Ok(context)
+    }
+}
+
+/// Read the paragraph around the selection of the focused element.
+///
+/// @param limit - maximum number of characters kept from the resulting text
+/// @returns clipped text around the selection, or none when no text selection exists
+fn read_selected_paragraph(limit: usize) -> Option<String> {
+    let element = get_focused_element().ok()?;
+    let text_range = get_selected_range(&element).ok()?;
+    read_around_range(&text_range, limit)
+}
+
+/// Read the window title of a window handle.
+///
+/// @param window - window whose caption should be read
+/// @returns trimmed caption, or none when the window has no title
+fn get_window_title(window: HWND) -> Option<String> {
+    unsafe {
+        let length = GetWindowTextLengthW(window);
+        if length <= 0 {
+            return None;
+        }
+
+        let mut buffer = vec![0u16; length as usize + 1];
+        let written = GetWindowTextW(window, &mut buffer);
+        if written <= 0 {
+            return None;
+        }
+
+        let title = String::from_utf16_lossy(&buffer[..written as usize]);
+        let title = title.trim();
+        if title.is_empty() {
+            None
+        } else {
+            Some(title.to_string())
+        }
+    }
+}
+
+/// Read the text around a selection range.
+///
+/// The enclosing paragraph is preferred, because it carries the sentence-level cues that resolve
+/// ambiguous wording. Controls that report the whole document as their paragraph are dropped in
+/// favor of a bounded character window centered on the selection.
+///
+/// @param text_range - first selected range of the focused element
+/// @param limit - maximum number of characters kept from the resulting text
+/// @returns clipped text around the selection, or none when the control has no text
+fn read_around_range(text_range: &IUIAutomationTextRange, limit: usize) -> Option<String> {
+    unsafe {
+        let selection = text_range.GetText(-1).ok()?.to_string();
+
+        // a paragraph wider than the sanity cap means the control ignored the unit
+        let cap = (limit.saturating_mul(4)).max(CONTEXT_WINDOW_RADIUS * 2);
+        if let Some(text) = enclosing_paragraph(text_range, cap, &selection) {
+            return Some(clip_around_selection(&text, &selection, limit));
+        }
+
+        // fall back to a fixed character window on each side of the selection
+        let window = text_range.Clone().ok()?;
+        window
+            .MoveEndpointByUnit(
+                TextPatternRangeEndpoint_Start,
+                TextUnit_Character,
+                -(CONTEXT_WINDOW_RADIUS as i32),
+            )
+            .ok()?;
+        window
+            .MoveEndpointByUnit(
+                TextPatternRangeEndpoint_End,
+                TextUnit_Character,
+                CONTEXT_WINDOW_RADIUS as i32,
+            )
+            .ok()?;
+
+        let text = window.GetText(-1).ok()?.to_string();
+        if text.trim().is_empty() {
+            None
+        } else {
+            Some(paragraph_around(&text, &selection, limit))
+        }
+    }
+}
+
+/// Read the enclosing paragraph of a text range.
+///
+/// @param text_range - selected range
+/// @param cap - maximum length accepted as a paragraph
+/// @param selection - selected text that the paragraph must contain
+/// @returns paragraph text, or none when the control ignored the paragraph unit
+fn enclosing_paragraph(
+    text_range: &IUIAutomationTextRange,
+    cap: usize,
+    selection: &str,
+) -> Option<String> {
+    unsafe {
+        let paragraph = text_range.Clone().ok()?;
+        paragraph.ExpandToEnclosingUnit(TextUnit_Paragraph).ok()?;
+        let text = paragraph.GetText(cap as i32).ok()?.to_string();
+        (text.chars().count() < cap && !text.trim().is_empty() && text.contains(selection.trim()))
+            .then_some(text)
     }
 }
 

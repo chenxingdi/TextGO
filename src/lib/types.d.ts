@@ -144,6 +144,20 @@ export type TranslationPrompt = {
 };
 
 /**
+ * Text captured around a selection so the model can disambiguate wording.
+ */
+export type SelectionContext = {
+  /** Identifier of the application containing the selection. */
+  appId?: string;
+  /** Title of the window that owned focus. */
+  title?: string;
+  /** Website URL when the source application is a browser. */
+  url?: string;
+  /** Text surrounding the selection. */
+  paragraph?: string;
+};
+
+/**
  * Type of shortcut-triggered record.
  */
 export type Entry = {
@@ -177,6 +191,8 @@ export type Entry = {
   response?: string;
   /** Translation prompt data. */
   translation?: TranslationPrompt;
+  /** Context captured together with the selection. */
+  context?: SelectionContext;
 } & ChatOptions;
 
 /**
