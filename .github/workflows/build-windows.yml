@@ -43,7 +43,28 @@ jobs:
         run: npx paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide
 
       - name: lint rust
-        run: cargo clippy --manifest-path ./src-tauri/Cargo.toml --all-targets -- -D warnings
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo clippy --manifest-path ./src-tauri/Cargo.toml --all-targets -- -D warnings 2>&1 | tee clippy.log
+          status=${PIPESTATUS[0]}
+          # the run log needs authentication, so surface the diagnostics in the public summary too
+          {
+            echo '## Clippy output'
+            echo '```'
+            tail -c 30000 clippy.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+      - name: upload clippy output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clippy-log
+          path: clippy.log
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: run rust tests
         run: cargo test --manifest-path ./src-tauri/Cargo.toml --lib
