@@ -27,7 +27,33 @@ pub const CONTEXT_TEXT_LIMIT_DEFAULT: usize = 1500;
 pub const CONTEXT_TEXT_LIMIT_MAX: usize = 4000;
 
 /// Number of characters read on each side of the selection before clipping.
+///
+/// This is the floor used when the configured limit is at its minimum; larger limits read a
+/// proportionally wider window, otherwise the limit would only ever trim text the platform had
+/// already reported and raising it could not add any context.
 pub const CONTEXT_WINDOW_RADIUS: usize = 900;
+
+/// Characters read on each side of the selection for a given limit.
+///
+/// The window must be wider than the limit so the clipping step still has text to center on and
+/// trim: reading exactly `limit` characters would leave a window that is off-center or truncated.
+///
+/// @param limit - maximum number of characters kept from the captured text
+/// @returns radius in characters for the platform-specific text lookup
+pub fn context_window_radius(limit: usize) -> usize {
+    CONTEXT_WINDOW_RADIUS.max(limit)
+}
+
+/// Length accepted as an enclosing paragraph for a given limit.
+///
+/// A control that reports the whole document as its paragraph would otherwise hand back a wall of
+/// text; anything at or above this cap is treated as ignored paragraph units.
+///
+/// @param limit - maximum number of characters kept from the captured text
+/// @returns cap in characters
+pub fn context_paragraph_cap(limit: usize) -> usize {
+    (limit.saturating_mul(4)).max(CONTEXT_WINDOW_RADIUS * 2)
+}
 
 /// Text captured around a selection so the model can disambiguate wording.
 #[derive(Clone, Debug, Default, serde::Serialize)]
@@ -203,6 +229,22 @@ mod tests {
         let clipped = clip_around_selection(&text, "中文中文", 11);
         assert!(clipped.chars().all(|c| c == '中' || c == '文' || c == '…'));
         assert_eq!(clipped.chars().count(), 12);
+    }
+
+    #[test]
+    fn wider_limits_read_wider_windows() {
+        // the read window has to grow with the limit, otherwise a bigger limit changes nothing
+        assert_eq!(context_window_radius(CONTEXT_TEXT_LIMIT_MIN), CONTEXT_WINDOW_RADIUS);
+        assert!(context_window_radius(CONTEXT_TEXT_LIMIT_DEFAULT) > context_window_radius(CONTEXT_TEXT_LIMIT_MIN));
+        assert!(context_window_radius(CONTEXT_TEXT_LIMIT_MAX) > context_window_radius(CONTEXT_TEXT_LIMIT_DEFAULT));
+        assert_eq!(context_window_radius(CONTEXT_TEXT_LIMIT_MAX), CONTEXT_TEXT_LIMIT_MAX);
+    }
+
+    #[test]
+    fn paragraph_cap_stays_above_the_limit() {
+        for limit in [CONTEXT_TEXT_LIMIT_MIN, CONTEXT_TEXT_LIMIT_DEFAULT, CONTEXT_TEXT_LIMIT_MAX] {
+            assert!(context_paragraph_cap(limit) > limit);
+        }
     }
 
     #[test]

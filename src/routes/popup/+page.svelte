@@ -882,34 +882,24 @@
           />
         </div>
       </div>
-      <!-- captured context chip: reports whether surrounding text was captured, and only that -->
-      {#if promptMode && smartContextDisplay.current}
+      <!-- captured context chip: only rendered when there is surrounding text to expand -->
+      {#if promptMode && smartContextDisplay.current && contextAvailable}
         <div class="shrink-0" style:background-color={contentBackgroundStyle}>
           <div class="flex items-center px-3 py-1">
-            {#if contextAvailable}
-              <button
-                class="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-field px-1 py-0.5 text-left transition-colors hover:bg-base-content/5"
-                aria-expanded={contextOpen}
-                onclick={() => (contextOpen = !contextOpen)}
-              >
-                <CaretDownIcon
-                  class="size-3.5 shrink-0 opacity-50 transition-transform {contextOpen ? 'rotate-180' : ''}"
-                />
-                <span class="truncate text-xs font-medium tracking-wide opacity-70">
-                  {m.context_available()}
-                </span>
-              </button>
-            {:else}
-              <!-- nothing to expand: no caret, no button -->
-              <div class="flex min-w-0 flex-1 items-center gap-1.5 px-1 py-0.5">
-                <span class="size-3.5 shrink-0" aria-hidden="true"></span>
-                <span class="truncate text-xs font-medium tracking-wide opacity-50">
-                  {m.context_unavailable()}
-                </span>
-              </div>
-            {/if}
+            <button
+              class="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-field px-1 py-0.5 text-left transition-colors hover:bg-base-content/5"
+              aria-expanded={contextOpen}
+              onclick={() => (contextOpen = !contextOpen)}
+            >
+              <CaretDownIcon
+                class="size-3.5 shrink-0 opacity-50 transition-transform {contextOpen ? 'rotate-180' : ''}"
+              />
+              <span class="truncate text-xs font-medium tracking-wide opacity-70">
+                {m.context_available()}
+              </span>
+            </button>
           </div>
-          {#if contextAvailable && contextOpen}
+          {#if contextOpen}
             <div class="px-3 pb-2 text-xs opacity-70">
               <div
                 class="max-h-32 overflow-auto rounded-box border border-base-content/10 px-2 py-1 whitespace-pre-wrap"

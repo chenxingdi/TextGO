@@ -155,7 +155,6 @@
   "prompt_template_count": "{count}个提示词模板",
   "prompt_variables_tip": "提示词中可使用以下变量：",
   "context_enhancement": "上下文",
-  "context_unavailable": "无上下文",
   "context_available": "有上下文",
   "context_variable_paragraph": "选区周围的文本",
   "context_variable_title": "窗口标题",

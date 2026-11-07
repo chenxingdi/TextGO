@@ -1,5 +1,5 @@
 use crate::error::AppError;
-use crate::platform::{is_browser, paragraph_around, SelectionContext, CONTEXT_WINDOW_RADIUS};
+use crate::platform::{context_window_radius, is_browser, paragraph_around, SelectionContext};
 use core_foundation::array::CFArray;
 use core_foundation::base::{CFRange, CFType, CFTypeRef, TCFType};
 use core_foundation::string::{CFString, CFStringRef};
@@ -516,8 +516,9 @@ fn get_frontmost_window_title() -> Option<String> {
 
 /// Read the text around a selection range.
 ///
-/// The window is centered on the selection and then trimmed to the enclosing paragraph. Some
-/// controls reject ranges that extend past their text, so the window shrinks until it is accepted.
+/// The window is centered on the selection and sized from the configured limit, then trimmed to
+/// the enclosing paragraph. Some controls reject ranges that extend past their text, so the window
+/// shrinks until it is accepted.
 ///
 /// @param element - focused accessibility element
 /// @param selected_range - range of the current selection
@@ -526,7 +527,7 @@ fn get_frontmost_window_title() -> Option<String> {
 fn read_around_range(element: &CFType, selected_range: CFRange, limit: usize) -> Option<String> {
     let selection = get_string_for_range(element, selected_range).ok()?;
 
-    let mut radius = CONTEXT_WINDOW_RADIUS;
+    let mut radius = context_window_radius(limit);
     loop {
         let start = (selected_range.location - radius as isize).max(0);
         let end = selected_range.location + selected_range.length + radius as isize;

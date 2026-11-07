@@ -1,6 +1,7 @@
 use crate::error::AppError;
 use crate::platform::{
-    clip_around_selection, is_browser, paragraph_around, SelectionContext, CONTEXT_WINDOW_RADIUS,
+    clip_around_selection, context_paragraph_cap, context_window_radius, is_browser, paragraph_around,
+    SelectionContext,
 };
 use std::fs;
 use std::path::Path;
@@ -261,9 +262,12 @@ fn get_window_title(window: HWND) -> Option<String> {
 
 /// Read the text around a selection range.
 ///
-/// The enclosing paragraph is preferred, because it carries the sentence-level cues that resolve
-/// ambiguous wording. Controls that report the whole document as their paragraph are dropped in
-/// favor of a bounded character window centered on the selection.
+/// The enclosing paragraph is preferred when it is long enough to fill the configured limit,
+/// because it carries the sentence-level cues that resolve ambiguous wording. Short paragraphs -
+/// a list entry, a headline, a single short sentence - are widened to a character window so that
+/// raising the limit actually reads more surrounding text instead of re-reading the same line.
+/// Controls that report the whole document as their paragraph are always dropped in favor of the
+/// bounded window.
 ///
 /// @param text_range - first selected range of the focused element
 /// @param limit - maximum number of characters kept from the resulting text
@@ -271,27 +275,60 @@ fn get_window_title(window: HWND) -> Option<String> {
 fn read_around_range(text_range: &IUIAutomationTextRange, limit: usize) -> Option<String> {
     unsafe {
         let selection = text_range.GetText(-1).ok()?.to_string();
+        let radius = context_window_radius(limit);
 
         // a paragraph wider than the sanity cap means the control ignored the unit
-        let cap = (limit.saturating_mul(4)).max(CONTEXT_WINDOW_RADIUS * 2);
-        if let Some(text) = enclosing_paragraph(text_range, cap, &selection) {
-            return Some(clip_around_selection(&text, &selection, limit));
+        if let Some(text) = enclosing_paragraph(text_range, context_paragraph_cap(limit), &selection)
+        {
+            let paragraph = clip_around_selection(&text, &selection, limit);
+            let wide_enough = paragraph.chars().count() >= limit.saturating_sub(2);
+            if wide_enough {
+                return Some(paragraph);
+            }
+
+            // the paragraph is shorter than the requested limit: widen to a character window and
+            // keep whichever reaches further, so a small limit still favours the tidy paragraph
+            if let Some(wider) = char_window(text_range, radius, &selection, limit) {
+                return Some(if wider.chars().count() > paragraph.chars().count() {
+                    wider
+                } else {
+                    paragraph
+                });
+            }
+            return Some(paragraph);
         }
 
-        // fall back to a fixed character window on each side of the selection
+        char_window(text_range, radius, &selection, limit)
+    }
+}
+
+/// Read a fixed character window on each side of the selection and trim it to paragraph bounds.
+///
+/// @param text_range - first selected range of the focused element
+/// @param radius - characters read on each side of the selection
+/// @param selection - selected text, used to locate the paragraph inside the window
+/// @param limit - maximum number of characters kept from the resulting text
+/// @returns clipped text around the selection, or none when the window is empty
+fn char_window(
+    text_range: &IUIAutomationTextRange,
+    radius: usize,
+    selection: &str,
+    limit: usize,
+) -> Option<String> {
+    unsafe {
         let window = text_range.Clone().ok()?;
         window
             .MoveEndpointByUnit(
                 TextPatternRangeEndpoint_Start,
                 TextUnit_Character,
-                -(CONTEXT_WINDOW_RADIUS as i32),
+                -(radius as i32),
             )
             .ok()?;
         window
             .MoveEndpointByUnit(
                 TextPatternRangeEndpoint_End,
                 TextUnit_Character,
-                CONTEXT_WINDOW_RADIUS as i32,
+                radius as i32,
             )
             .ok()?;
 
@@ -299,7 +336,7 @@ fn read_around_range(text_range: &IUIAutomationTextRange, limit: usize) -> Optio
         if text.trim().is_empty() {
             None
         } else {
-            Some(paragraph_around(&text, &selection, limit))
+            Some(paragraph_around(&text, selection, limit))
         }
     }
 }

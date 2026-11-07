@@ -155,7 +155,6 @@
   "prompt_template_count": "Prompt Templates ({count})",
   "prompt_variables_tip": "The following variables can be used in prompts:",
   "context_enhancement": "Context",
-  "context_unavailable": "No context",
   "context_available": "Context available",
   "context_variable_paragraph": "Text around the selection",
   "context_variable_title": "Window title",
