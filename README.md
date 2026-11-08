@@ -31,9 +31,34 @@ _TextGO is a cross-platform text processing tool that recognizes text types and 
 - **Customizable Appearance**: Use custom toolbar icons and customize light and dark themes separately.
 - **Ready to Use**: A rich set of built-in text types and processing actions, ready to use with minimal configuration.
 - **Highly Extensible**: Extend with regex, ML models, scripts, or local/cloud AI for recognition and processing.
+- **Context-Aware AI**: Send the text around your selection to AI actions, including a passage you just copied, so the model reads the selection in its own context.
 
 | <img align="center" src="screenshots/new_rule.png" /> | <img align="center" src="screenshots/model_providers.png" /> | <img align="center" src="screenshots/update_script.png" /> |
 | ----------------------------------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------- |
+
+## 🧠 Context for AI Actions
+
+An AI action can carry the text around the selection into the request, so the model interprets the selection with the paragraph, page or passage it sits in instead of guessing.
+
+TextGO reads that surrounding text from the first source that answers:
+
+| Source                                      | Covers                                                            |
+| ------------------------------------------- | ----------------------------------------------------------------- |
+| Accessibility text pattern                  | Browsers, Word, VS Code, Electron apps                            |
+| Reader text controls                        | Readers that publish one control per paragraph                    |
+| The open document named by the window title | PDF and EPUB readers                                              |
+| A passage copied moments earlier            | Applications that expose no text at all, such as Qt based readers |
+
+The clipboard source works on a copy you made yourself: copy a passage, then select a part of it within the valid window (10, 30 or 60 seconds) and TextGO uses that copy as the surrounding text. The copy has to contain the selection and be at least 20 characters longer, so a word copied on its own never pretends to be context. Text the application produces itself, such as an answer or a translation, is never used.
+
+**Usage:**
+
+1. Enable context for the action in the prompt editor, and optionally append it to the system prompt
+2. Reference it in a template with `{{context}}`; `{{title}}`, `{{url}}` and `{{app}}` are also available
+3. Cap the captured text between 20 and 200 characters in the context settings
+
+> [!NOTE]
+> Only the surrounding text is sent. Window titles, page addresses and application names stay on the device unless a template references them, and a clipboard copy is read only when a selection is made: TextGO keeps the moment of the copy, not its content.
 
 ## ⬇️ Getting Started
 
