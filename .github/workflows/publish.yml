@@ -1,0 +1,133 @@
+name: publish
+
+# Builds the Windows installer and publishes a public GitHub Release with the updater manifest.
+#
+# The release carries the NSIS installer, its signature and latest.json, so installed copies update
+# themselves through the endpoint configured in tauri.conf.json.
+#
+# Triggered by a push to release/** or manually. A tag push is not used because the tag would also
+# start release.yml, which builds the same bundles again; the tag is created by `gh release create`.
+#
+# The signing key comes from the repository secrets. Without it the build still works but skips the
+# updater artifacts and latest.json, so a fork without the key still gets installers.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'release/**'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    env:
+      NODE_OPTIONS: --max_old_space_size=4096
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: setup rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: cache rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: install pnpm
+        run: npm install -g pnpm@latest-11
+
+      - name: install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      # the generated messages are gitignored and are otherwise only produced by the vite plugin
+      - name: compile messages
+        run: npx paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide
+
+      # the bundler downloads NSIS and its helper DLL at build time; a 504 from that download is what
+      # broke the previous release, so a failed attempt is retried instead of abandoning the release
+      - name: build bundles
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $attempts = 3
+          for ($attempt = 1; $attempt -le $attempts; $attempt++) {
+            Write-Host "build attempt $attempt of $attempts"
+            if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
+              Write-Host "no signing key secret: building installers without updater artifacts"
+              pnpm tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'
+            } else {
+              pnpm tauri build
+            }
+            if ($LASTEXITCODE -eq 0) { break }
+            Write-Host "attempt $attempt failed with exit code $LASTEXITCODE"
+            if ($attempt -eq $attempts) { throw "pnpm tauri build failed after $attempts attempts" }
+            Start-Sleep -Seconds 30
+          }
+
+      - name: write updater manifest
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          if (-not $setup) { throw "the NSIS installer was not produced" }
+
+          $signature = "$($setup.FullName).sig"
+          if (-not (Test-Path $signature)) {
+            Write-Host "no .sig next to the installer: publishing without updater manifest"
+            exit 0
+          }
+
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          if (-not $version) { throw "version is missing from tauri.conf.json" }
+
+          # the updater endpoint resolves releases/latest/download/latest.json, so the URL has to be
+          # the public asset of this very release
+          $manifest = [ordered]@{
+            version   = $version
+            notes     = "See the release notes on GitHub."
+            pub_date  = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+            platforms = [ordered]@{
+              'windows-x86_64' = [ordered]@{
+                signature = (Get-Content $signature -Raw).Trim()
+                url       = "https://github.com/${{ github.repository }}/releases/download/v$version/$($setup.Name)"
+              }
+            }
+          }
+          $manifest | ConvertTo-Json -Depth 6 | Out-File -FilePath latest.json -Encoding utf8
+          Write-Host "latest.json:"
+          Get-Content latest.json
+
+      - name: publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $tag = "v$version"
+
+          $assets = @()
+          $setup = Get-ChildItem src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          if (-not $setup) { throw "the NSIS installer was not produced" }
+          $assets += $setup.FullName
+          if (Test-Path "$($setup.FullName).sig") { $assets += "$($setup.FullName).sig" }
+          if (Test-Path latest.json) { $assets += (Resolve-Path latest.json).Path }
+
+          # a portable copy next to the installer, for users who do not want an installation
+          $plain = Get-ChildItem src-tauri/target/release/*.exe | Select-Object -First 1
+          if ($plain) { $assets += $plain.FullName }
+
+          Write-Host "publishing $tag with $($assets -join ', ')"
+          $ghArgs = @('release', 'create', $tag) + $assets +
+            @('--title', $tag, '--target', '${{ github.sha }}', '--generate-notes', '--latest')
+          & gh @ghArgs
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed with exit code $LASTEXITCODE" }
