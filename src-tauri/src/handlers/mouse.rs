@@ -1,5 +1,5 @@
 use crate::commands::{
-    get_clipboard_text, get_shortcut_context, send_copy_keys, set_clipboard_text,
+    get_clipboard_text, get_shortcut_context, send_copy_keys, write_clipboard_text,
     ShortcutHandlerGuard,
 };
 use crate::error::AppError;
@@ -198,11 +198,12 @@ fn detect_user_copy_operation(event: &Event) {
                         if let Ok(current) = get_clipboard_text() {
                             if current.trim() != cached_text.trim() {
                                 // clipboard was overwritten by restore before interrupt fired
-                                // compensate by writing the cached selection back
+                                // compensate by writing the cached selection back; the write is ours
+                                // and must neither record nor forget a user copy
                                 debug!(
                                     "Copy shortcut compensation: restoring cached selection to clipboard"
                                 );
-                                let _ = set_clipboard_text(cached_text);
+                                let _ = write_clipboard_text(cached_text);
                             }
                         }
                     });

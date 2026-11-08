@@ -1,4 +1,4 @@
-use crate::commands::clipboard::{set_clipboard_text, with_clipboard_backup};
+use crate::commands::clipboard::{with_clipboard_backup, write_clipboard_text};
 use crate::commands::keyboard::send_paste_keys;
 use crate::commands::shortcut::ShortcutHandlerGuard;
 use crate::error::AppError;
@@ -27,8 +27,9 @@ pub async fn enter_text(
 
     // core logic for entering text
     let do_enter_text = || async move {
-        // set clipboard text
-        set_clipboard_text(text)?;
+        // the clipboard temporarily holds the text being pasted; the backup restore puts the
+        // user's content back, so this write must not invalidate a recorded copy
+        write_clipboard_text(text)?;
 
         // send paste shortcut
         let (sender, receiver) = tokio::sync::oneshot::channel();
@@ -68,6 +69,9 @@ pub async fn enter_text(
     if clipboard.unwrap_or(false) {
         do_enter_text().await
     } else {
-        with_clipboard_backup(do_enter_text).await
+        // the backup also reports what it replaced, which only the selection path consumes
+        with_clipboard_backup(do_enter_text)
+            .await
+            .map(|(result, _previous_text)| result)
     }
 }

@@ -154,9 +154,43 @@ pub fn send_cut_keys(
     Ok(())
 }
 
+/// Whether the configured copy shortcut is Ctrl+Insert.
+///
+/// The setting only exists on Windows; macOS always copies with Cmd+C.
+///
+/// @returns whether the configured combination sends Ctrl+Insert
+pub fn configured_copy_insert() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        false
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        !crate::USE_CTRL_C.load(Ordering::Relaxed)
+    }
+}
+
 /// Send copy shortcut keys.
 #[tauri::command]
 pub fn send_copy_keys(
+    suspend_shortcuts: Option<bool>,
+    release_modifiers: Option<bool>,
+) -> Result<(), AppError> {
+    send_copy_keys_with(configured_copy_insert(), suspend_shortcuts, release_modifiers)
+}
+
+/// Send a copy shortcut with an explicit combination.
+///
+/// Applications implement one of the two combinations at most: Qt based readers copy with Ctrl+C,
+/// while some legacy controls answer Ctrl+Insert only. The clipboard fallback therefore tries both,
+/// which makes the combination a parameter instead of a setting lookup.
+///
+/// @param insert - send Ctrl+Insert instead of Ctrl+C; ignored on macOS
+/// @param suspend_shortcuts - suspend the shortcut handler while the keys are sent
+/// @param release_modifiers - release modifiers left over from the triggering shortcut
+pub fn send_copy_keys_with(
+    insert: bool,
     suspend_shortcuts: Option<bool>,
     release_modifiers: Option<bool>,
 ) -> Result<(), AppError> {
@@ -173,15 +207,15 @@ pub fn send_copy_keys(
         release_modifier_keys(enigo)?;
     }
 
-    // send Cmd+C or Ctrl+Insert/Ctrl+C based on setting
+    // send Cmd+C, Ctrl+C or Ctrl+Insert
     #[cfg(target_os = "macos")]
     let (modifier, key) = (Key::Meta, Key::Unicode('c'));
     #[cfg(not(target_os = "macos"))]
     let (modifier, key) = {
-        if crate::USE_CTRL_C.load(Ordering::Relaxed) {
-            (Key::Control, Key::Unicode('c'))
-        } else {
+        if insert {
             (Key::Control, Key::Insert)
+        } else {
+            (Key::Control, Key::Unicode('c'))
         }
     };
 

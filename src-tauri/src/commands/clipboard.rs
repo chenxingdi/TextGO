@@ -1,6 +1,8 @@
+use crate::clipboard_watch;
 use crate::error::AppError;
+use crate::platform;
 use crate::{CLIPBOARD, CLIPBOARD_RESTORE_INTERRUPTED};
-use clipboard_rs::{Clipboard, ContentFormat};
+use clipboard_rs::{Clipboard, ClipboardContent, ContentFormat};
 use log::debug;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -15,15 +17,7 @@ pub static CLIPBOARD_CONSUMED_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 /// Reading it never opens the clipboard, so polling it cannot disturb another application that is
 /// still writing. Returns `None` on platforms that do not expose such a counter.
 pub fn clipboard_sequence() -> Option<u64> {
-    #[cfg(target_os = "windows")]
-    {
-        Some(unsafe { windows::Win32::System::DataExchange::GetClipboardSequenceNumber() } as u64)
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        None
-    }
+    platform::clipboard_change_count()
 }
 
 // all supported clipboard content formats
@@ -44,20 +38,79 @@ pub fn get_clipboard_text() -> Result<String, AppError> {
     })
 }
 
-/// Set clipboard text content.
+/// Write text into the clipboard, marked as our own write.
+///
+/// The change monitor must not mistake a text we write for a copy of the user's. The caller decides
+/// what the write means: a copy the user asked for ([`copy_text`]) or content the application
+/// produced ([`set_clipboard_text`]).
+///
+/// @param text - text placed on the clipboard
+pub(crate) fn write_clipboard_text(text: String) -> Result<(), AppError> {
+    run(|| {
+        let _own = clipboard_watch::begin_own_write();
+        Ok(CLIPBOARD.lock()?.as_ref()?.set_text(text)?)
+    })
+}
+
+/// Set clipboard text content produced by the application itself.
+///
+/// The recorded user copy is forgotten: an answer, a translation or a script result replaces the
+/// pasteboard slot, so the paragraph copied a moment ago is gone and its moment must not be used to
+/// date this text as surrounding context.
+///
+/// @param text - text produced by the application
 #[tauri::command]
 pub fn set_clipboard_text(text: String) -> Result<(), AppError> {
-    run(|| Ok(CLIPBOARD.lock()?.as_ref()?.set_text(text)?))
+    write_clipboard_text(text)?;
+    clipboard_watch::forget_copy();
+    Ok(())
+}
+
+/// Write text the user asked us to copy.
+///
+/// The write is dated as a user copy so that a selection made shortly afterwards can use the text
+/// as surrounding context. Every copy the user starts through the UI must use this command,
+/// otherwise copying a paragraph with our own toolbar never becomes usable as context.
+///
+/// @param text - text the user asked to copy
+#[tauri::command]
+pub fn copy_text(text: String) -> Result<(), AppError> {
+    write_clipboard_text(text)?;
+    clipboard_watch::note_user_copy();
+    Ok(())
 }
 
 /// Clear clipboard contents.
 #[tauri::command]
 pub fn clear_clipboard() -> Result<(), AppError> {
-    run(|| Ok(CLIPBOARD.lock()?.as_ref()?.clear()?))
+    run(|| {
+        let _own = clipboard_watch::begin_own_write();
+        Ok(CLIPBOARD.lock()?.as_ref()?.clear()?)
+    })
+}
+
+/// Largest backup text kept for context, in bytes.
+///
+/// Anything larger is a whole-document copy: cloning it on every selection would cost more than the
+/// context could ever use, and the surrounding-text window is bounded anyway.
+const MAX_BACKUP_TEXT_BYTES: usize = 512 * 1024;
+
+/// Plain text of a clipboard backup, when the copy published any.
+///
+/// @param contents - formats read from the clipboard before our operation
+/// @returns the text format payload, if the copy carried one
+fn backup_text(contents: &[ClipboardContent]) -> Option<String> {
+    contents.iter().find_map(|content| match content {
+        ClipboardContent::Text(text) if text.len() <= MAX_BACKUP_TEXT_BYTES => Some(text.clone()),
+        _ => None,
+    })
 }
 
 /// Backup clipboard contents, execute operation, then restore clipboard contents.
-pub async fn with_clipboard_backup<F, Fut, T>(operation: F) -> Result<T, AppError>
+///
+/// @param operation - work performed while the clipboard is backed up
+/// @returns the operation result and the text the clipboard held before it ran
+pub async fn with_clipboard_backup<F, Fut, T>(operation: F) -> Result<(T, Option<String>), AppError>
 where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<T, AppError>>,
@@ -69,6 +122,9 @@ where
     // backup all format contents
     let contents = run(|| Ok(CLIPBOARD.lock()?.as_ref()?.get(&ALL_FORMATS)?))?;
     debug!("Clipboard backup: saved original clipboard contents");
+
+    // what the user copied before this selection, used as a source of surrounding text
+    let previous_text = backup_text(&contents);
 
     // execute operation
     let result = operation().await?;
@@ -88,13 +144,19 @@ where
         // restore original clipboard contents
         debug!("Clipboard restore: restoring original clipboard contents");
         if !contents.is_empty() {
-            run(|| Ok(CLIPBOARD.lock()?.as_ref()?.set(contents)?))?;
+            run(|| {
+                let _own = clipboard_watch::begin_own_write();
+                Ok(CLIPBOARD.lock()?.as_ref()?.set(contents)?)
+            })?;
+            // the text is back where it was, so a copy recorded before the selection still describes
+            // the clipboard; only the sequence that identifies it moved
+            clipboard_watch::keep_copy_current();
         } else {
             clear_clipboard()?;
         }
     }
 
-    Ok(result)
+    Ok((result, previous_text))
 }
 
 /// Run function on main thread if on macOS, otherwise run directly.

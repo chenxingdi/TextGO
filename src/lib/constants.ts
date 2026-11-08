@@ -141,10 +141,19 @@ export const POPUP_FONT_SIZE = {
  * Maximum characters captured from the text around the selection.
  */
 export const CONTEXT_TEXT_LIMIT = {
-  min: 200,
-  default: 1500,
-  max: 4000,
-  step: 100
+  min: 20,
+  default: 200,
+  max: 200,
+  step: 10
+};
+
+/**
+ * How long a clipboard copy stays usable as surrounding text, in seconds.
+ */
+export const CONTEXT_CLIPBOARD_AGE = {
+  min: 10,
+  default: 30,
+  max: 60
 };
 
 /**

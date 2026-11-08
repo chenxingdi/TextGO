@@ -109,7 +109,9 @@ export const DEFAULT_ACTIONS: Processor[] = [
     icon: CopyIcon,
     process: (text: string) => {
       if (text) {
-        invoke('set_clipboard_text', { text });
+        // the backend records this write as a user copy, so a selection made shortly afterwards
+        // can use the copied text as surrounding context
+        invoke('copy_text', { text });
       }
       return '';
     },
@@ -367,7 +369,7 @@ const promptExecutor: Executor = async (rule, entry, placement, isCurrent = () =
   }
 
   console.debug(`Generating prompt: ${promptId}`);
-  if (smartContext.current) {
+  if (smartContext.current && prompt.context) {
     entry.context = await captureContext();
   } else {
     entry.context = undefined;
@@ -394,6 +396,9 @@ const promptExecutor: Executor = async (rule, entry, placement, isCurrent = () =
   entry.actionLabel = promptId;
   entry.provider = prompt.provider;
   entry.model = prompt.model;
+  // the context block is added per conversation: enabling context makes the variables available,
+  // and the system prompt checkbox decides whether the block is appended as well
+  entry.injectContext = Boolean(prompt.context && prompt.appendContext);
   entry.maxTokens = prompt.maxTokens;
   entry.temperature = prompt.temperature;
   entry.topP = prompt.topP;

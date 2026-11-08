@@ -183,6 +183,27 @@ export async function setupTray(locale: Locale = getLocale()) {
 }
 
 /**
+ * Copy text to the system clipboard.
+ *
+ * The write goes through the backend so it is marked as ours. Copies made with the webview
+ * clipboard API advance the change counter from another process, which the clipboard change
+ * monitor reads as a copy the user made and may then use as selection context: copying an answer,
+ * a translation or a script snippet would silently become the surrounding text of the next lookup.
+ *
+ * @param text - text to place on the clipboard
+ */
+export async function copyToClipboard(text: string): Promise<void> {
+  if (!text) {
+    return;
+  }
+  try {
+    await invoke('set_clipboard_text', { text });
+  } catch (error) {
+    console.error(`Failed to copy text: ${error}`);
+  }
+}
+
+/**
  * Serialize extension to JSON string.
  *
  * @param extension - extension object

@@ -224,6 +224,7 @@
   import Select from '$lib/components/Select.svelte';
   import { composeContextBlock, contextParagraph as contextParagraphOf } from '$lib/context';
   import { renderTranslationPrompt } from '$lib/executor';
+  import { copyToClipboard } from '$lib/helpers';
   import { NATURAL_CASES } from '$lib/matcher';
   import { m } from '$lib/paraglide/messages';
   import {
@@ -234,7 +235,6 @@
     popupPinned,
     popupWindowSize,
     prompts,
-    smartContextAutoInject,
     smartContextDisplay
   } from '$lib/stores.svelte';
   import { invoke } from '@tauri-apps/api/core';
@@ -503,11 +503,9 @@
       const messages: ChatMessage[] = [];
 
       // add system prompt; the context block is added here instead of during rendering so history
-      // records never carry window titles or surrounding text
-      const systemPrompt = [
-        entry.systemPrompt?.trim(),
-        smartContextAutoInject.current ? composeContextBlock(entry.context) : ''
-      ]
+      // records never carry window titles or surrounding text, and only AI actions that opted in
+      // receive it
+      const systemPrompt = [entry.systemPrompt?.trim(), entry.injectContext ? composeContextBlock(entry.context) : '']
         .filter(Boolean)
         .join('\n\n');
       if (systemPrompt) {
@@ -640,12 +638,8 @@
    *
    * @param text - raw Markdown response content
    */
-  async function copyResponse(text: string) {
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch (error) {
-      console.error(`Failed to copy AI response: ${error}`);
-    }
+  function copyResponse(text: string) {
+    void copyToClipboard(text);
   }
 
   /**
@@ -882,12 +876,19 @@
           />
         </div>
       </div>
-      <!-- captured context chip: only rendered when there is surrounding text to expand -->
-      {#if promptMode && smartContextDisplay.current && contextAvailable}
-        <div class="shrink-0" style:background-color={contentBackgroundStyle}>
-          <div class="flex items-center px-3 py-1">
+      <!-- popup window body -->
+      <div
+        class="min-h-0 flex-1 overflow-auto bg-base-100"
+        style="background-color: {contentBackgroundStyle}; --popup-gutter-background: {gutterBackgroundStyle}"
+        bind:this={scrollElement}
+        onscroll={handleScroll}
+      >
+        <!-- captured context banner: kept inside the scroll area so a long conversation can scroll
+             it away instead of pinning it above the messages -->
+        {#if promptMode && smartContextDisplay.current && contextAvailable}
+          <div class="border-b border-base-content/10">
             <button
-              class="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 rounded-field px-1 py-0.5 text-left transition-colors hover:bg-base-content/5"
+              class="flex w-full min-w-0 cursor-pointer items-center gap-1.5 px-4 py-1.5 text-left transition-colors hover:bg-base-content/5"
               aria-expanded={contextOpen}
               onclick={() => (contextOpen = !contextOpen)}
             >
@@ -898,25 +899,17 @@
                 {m.context_available()}
               </span>
             </button>
-          </div>
-          {#if contextOpen}
-            <div class="px-3 pb-2 text-xs opacity-70">
-              <div
-                class="max-h-32 overflow-auto rounded-box border border-base-content/10 px-2 py-1 whitespace-pre-wrap"
-              >
-                {contextParagraph}
+            {#if contextOpen}
+              <div class="px-4 pb-2 text-xs opacity-70">
+                <div
+                  class="max-h-32 overflow-auto rounded-box border border-base-content/10 px-2 py-1 whitespace-pre-wrap"
+                >
+                  {contextParagraph}
+                </div>
               </div>
-            </div>
-          {/if}
-        </div>
-      {/if}
-      <!-- popup window body -->
-      <div
-        class="min-h-0 flex-1 overflow-auto bg-base-100"
-        style="background-color: {contentBackgroundStyle}; --popup-gutter-background: {gutterBackgroundStyle}"
-        bind:this={scrollElement}
-        onscroll={handleScroll}
-      >
+            {/if}
+          </div>
+        {/if}
         {#if promptMode}
           {#if conversationMode}
             <div class="space-y-4 px-4 pt-3 pb-20">

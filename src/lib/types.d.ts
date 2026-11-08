@@ -193,6 +193,8 @@ export type Entry = {
   translation?: TranslationPrompt;
   /** Context captured together with the selection. */
   context?: SelectionContext;
+  /** Whether the captured context is appended to the system prompt of this conversation. */
+  injectContext?: boolean;
 } & ChatOptions;
 
 /**
@@ -319,6 +321,10 @@ export type Prompt = {
   prompt: string;
   /** Target language ISO 639-1 code. */
   targetLanguage?: string;
+  /** Whether this AI action captures context for the session. */
+  context?: boolean;
+  /** Whether the captured context is appended to the system prompt. */
+  appendContext?: boolean;
 } & ChatOptions;
 
 /**

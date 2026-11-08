@@ -5,7 +5,7 @@
   import Button from '$lib/components/Button.svelte';
   import Shortcut from '$lib/components/Shortcut.svelte';
   import Title from '$lib/components/Title.svelte';
-  import { formatISO8601 } from '$lib/helpers';
+  import { copyToClipboard, formatISO8601 } from '$lib/helpers';
   import { NoData } from '$lib/icons';
   import { m } from '$lib/paraglide/messages';
   import { entries } from '$lib/stores.svelte';
@@ -32,7 +32,7 @@
    * @param text - text to copy
    */
   function copy(text: string | null | undefined) {
-    text && navigator.clipboard && navigator.clipboard.writeText(text);
+    void copyToClipboard(text ?? '');
   }
 
   /**

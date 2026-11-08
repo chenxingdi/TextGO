@@ -1,4 +1,5 @@
 import {
+  CONTEXT_CLIPBOARD_AGE,
   CONTEXT_TEXT_LIMIT,
   DEFAULT_POPUP_WINDOW_SIZE,
   POPUP_CORNER_RADIUS,
@@ -354,6 +355,13 @@ export const smartContext = persisted<boolean>('smartContext', false, {
 
 // maximum characters captured from the text around the selection
 export const smartContextLimit = persisted<number>('smartContextLimit', CONTEXT_TEXT_LIMIT.default, {
+  onload: (limit) => {
+    // records stored with the previous range must not leave the slider showing an out of range value
+    const normalized = Math.min(CONTEXT_TEXT_LIMIT.max, Math.max(CONTEXT_TEXT_LIMIT.min, Math.trunc(limit)));
+    if (normalized !== limit) {
+      queueMicrotask(() => (smartContextLimit.current = normalized));
+    }
+  },
   onchange: (limit) => {
     if (smartContext.current) {
       invoke('set_context_limit', { limit });
@@ -361,11 +369,28 @@ export const smartContextLimit = persisted<number>('smartContextLimit', CONTEXT_
   }
 });
 
-// whether captured context is appended to the system prompt automatically
-export const smartContextAutoInject = persisted<boolean>('smartContextAutoInject', true);
-
 // whether the captured context is shown above the AI response in the popup
 export const smartContextDisplay = persisted<boolean>('smartContextDisplay', true);
+
+// whether a copy made shortly before the selection may provide the surrounding text
+export const contextClipboard = persisted<boolean>('contextClipboard', true, {
+  onchange: (enabled) => {
+    invoke('set_context_clipboard', { enabled });
+  }
+});
+
+// how long a clipboard copy stays usable as surrounding text
+export const contextClipboardMaxAge = persisted<number>('contextClipboardMaxAge', CONTEXT_CLIPBOARD_AGE.default, {
+  onload: (seconds) => {
+    const normalized = Math.min(CONTEXT_CLIPBOARD_AGE.max, Math.max(CONTEXT_CLIPBOARD_AGE.min, Math.trunc(seconds)));
+    if (normalized !== seconds) {
+      queueMicrotask(() => (contextClipboardMaxAge.current = normalized));
+    }
+  },
+  onchange: (seconds) => {
+    invoke('set_context_clipboard_max_age', { seconds });
+  }
+});
 
 // shortcut trigger records
 export const entries = persisted<Entry[]>('entries', []);
