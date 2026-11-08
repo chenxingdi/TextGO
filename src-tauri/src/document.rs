@@ -1022,7 +1022,9 @@ mod tests {
     fn hyphenated_words_are_joined_for_display() {
         assert_eq!(
             dehyphenate("com-\nmonly used\n\npara-\ngraph"),
-            "commonly used\n\npara-\ngraph"
+            "commonly used\n\nparagraph"
         );
+        // a hyphen in front of a paragraph gap is part of the text, not a typesetting artefact
+        assert_eq!(dehyphenate("com-\n\nmonly"), "com-\n\nmonly");
     }
 }
