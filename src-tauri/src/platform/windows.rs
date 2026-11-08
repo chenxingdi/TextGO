@@ -4,7 +4,7 @@ use crate::platform::{
     clip_around_selection, context_paragraph_cap, context_window_radius, is_browser, paragraph_around,
     SelectionContext,
 };
-use log::{debug, info};
+use log::info;
 use std::fs;
 use std::path::Path;
 use std::sync::mpsc;
