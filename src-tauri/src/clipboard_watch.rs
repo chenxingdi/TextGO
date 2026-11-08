@@ -145,6 +145,15 @@ pub fn note_user_copy() {
     }
 }
 
+/// Forget the recorded copy because the clipboard now holds text nobody copied on purpose.
+///
+/// Output the application produced itself (an answer, a translation, a script result) replaces what
+/// the user had copied, so keeping the old moment would date text that is no longer on the
+/// clipboard.
+pub fn forget_copy() {
+    clear();
+}
+
 /// Forget the last change, used when the feature is turned off.
 pub fn clear() {
     if let Ok(mut last) = LAST_CHANGE.lock() {

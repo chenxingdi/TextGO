@@ -38,27 +38,44 @@ pub fn get_clipboard_text() -> Result<String, AppError> {
     })
 }
 
-/// Set clipboard text content.
-#[tauri::command]
-pub fn set_clipboard_text(text: String) -> Result<(), AppError> {
+/// Write text into the clipboard, marked as our own write.
+///
+/// The change monitor must not mistake a text we write for a copy of the user's. The caller decides
+/// what the write means: a copy the user asked for ([`copy_text`]) or content the application
+/// produced ([`set_clipboard_text`]).
+///
+/// @param text - text placed on the clipboard
+pub(crate) fn write_clipboard_text(text: String) -> Result<(), AppError> {
     run(|| {
-        // the change monitor must not mistake a text we write for a copy of the user's
         let _own = clipboard_watch::begin_own_write();
         Ok(CLIPBOARD.lock()?.as_ref()?.set_text(text)?)
     })
 }
 
+/// Set clipboard text content produced by the application itself.
+///
+/// The recorded user copy is forgotten: an answer, a translation or a script result replaces the
+/// pasteboard slot, so the paragraph copied a moment ago is gone and its moment must not be used to
+/// date this text as surrounding context.
+///
+/// @param text - text produced by the application
+#[tauri::command]
+pub fn set_clipboard_text(text: String) -> Result<(), AppError> {
+    write_clipboard_text(text)?;
+    clipboard_watch::forget_copy();
+    Ok(())
+}
+
 /// Write text the user asked us to copy.
 ///
-/// The write itself is still marked as ours, so a later restore cannot be mistaken for a copy of
-/// the user's; it is then dated as a user copy so that a selection made shortly afterwards can use
-/// the text as surrounding context. The plain copy action must use this command, otherwise copying
-/// a paragraph with our own toolbar never becomes usable as context.
+/// The write is dated as a user copy so that a selection made shortly afterwards can use the text
+/// as surrounding context. Every copy the user starts through the UI must use this command,
+/// otherwise copying a paragraph with our own toolbar never becomes usable as context.
 ///
 /// @param text - text the user asked to copy
 #[tauri::command]
 pub fn copy_text(text: String) -> Result<(), AppError> {
-    set_clipboard_text(text)?;
+    write_clipboard_text(text)?;
     clipboard_watch::note_user_copy();
     Ok(())
 }

@@ -180,7 +180,7 @@ fn capture_context(
                 }
             }
             None => debug!(
-                "Clipboard change is older than {}s, not used as context",
+                "No clipboard copy within {}s, not used as context",
                 max_age.as_secs()
             ),
         }
