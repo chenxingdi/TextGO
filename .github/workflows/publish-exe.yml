@@ -1,0 +1,74 @@
+name: publish-exe
+
+# Publishes the Windows x64 executable as a public GitHub Release.
+#
+# This exists because release.yml needs TAURI_SIGNING_PRIVATE_KEY for the updater artifacts and does
+# not run on this fork. A push to release/** (or a manual run) builds the unsigned executable and
+# creates the release for the version in tauri.conf.json.
+#
+# A tag push is deliberately not used as the trigger: it would also start release.yml, which fails
+# without the signing key, and the tag itself is created by `gh release create --target` below.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'release/**'
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    env:
+      NODE_OPTIONS: --max_old_space_size=4096
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: setup rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: cache rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: install pnpm
+        run: npm install -g pnpm@latest-11
+
+      - name: install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      # the generated messages are gitignored and are otherwise only produced by the vite plugin
+      - name: compile messages
+        run: npx paraglide-js compile --project ./project.inlang --outdir ./src/lib/paraglide
+
+      # --no-bundle skips the NSIS/WiX bundling and the updater signing it would require
+      - name: build windows x64 executable
+        run: pnpm tauri build --no-bundle
+
+      - name: read version
+        id: version
+        shell: pwsh
+        run: |
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $tag = "v$VERSION"
+          $exe = Get-ChildItem src-tauri/target/release/*.exe | Select-Object -First 1
+          if (-not $exe) { throw "no executable was built" }
+          Write-Host "publishing $tag with $($exe.Name) ($($exe.Length) bytes)"
+          gh release create $tag $exe.FullName --title $tag --target ${{ github.sha }} --generate-notes --latest
