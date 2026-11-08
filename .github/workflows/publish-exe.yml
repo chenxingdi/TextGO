@@ -59,7 +59,9 @@ jobs:
         shell: pwsh
         run: |
           $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
-          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          if (-not $version) { throw "version is missing from tauri.conf.json" }
+          # Out-File defaults to UTF-16 on Windows PowerShell, which the runner cannot parse
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: publish release
         shell: pwsh
