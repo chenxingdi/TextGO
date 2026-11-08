@@ -145,6 +145,37 @@ pub fn note_user_copy() {
     }
 }
 
+/// Whether the clipboard still holds the text of a recorded copy.
+///
+/// The recorded moment belongs to one specific write. Anything that replaces the content
+/// afterwards without putting it back - another application's copy inside a suspended observation
+/// window, or an interrupted restore that leaves our own text behind - leaves text on the clipboard
+/// that the moment no longer describes, and matching a selection against it would date unrelated
+/// text as surrounding context.
+///
+/// @param change - recorded copy
+/// @returns whether the clipboard content is unchanged since that copy
+pub fn holds_copy(change: Change) -> bool {
+    platform::clipboard_change_count() == Some(change.sequence)
+}
+
+/// Keep the recorded copy usable after the clipboard content was put back.
+///
+/// Restoring a backup writes the same text again, which advances the counter without changing what
+/// the clipboard holds, so the recorded moment stays valid and only the sequence that identifies
+/// the content moves.
+pub fn keep_copy_current() {
+    let Some(sequence) = platform::clipboard_change_count() else {
+        return;
+    };
+
+    if let Ok(mut last) = LAST_CHANGE.lock() {
+        if let Some(change) = last.as_mut() {
+            change.sequence = sequence;
+        }
+    }
+}
+
 /// Forget the recorded copy because the clipboard now holds text nobody copied on purpose.
 ///
 /// Output the application produced itself (an answer, a translation, a script result) replaces what
@@ -253,6 +284,40 @@ mod tests {
         if crate::platform::clipboard_change_count().is_some() {
             assert!(fresh_change(Instant::now(), Duration::from_secs(1)).is_some());
         }
+        clear();
+    }
+
+    #[test]
+    fn a_recorded_copy_only_holds_while_the_content_is_unchanged() {
+        clear();
+        note_user_copy();
+        let Some(change) = fresh_change(Instant::now(), Duration::from_secs(1)) else {
+            // platforms without a change counter cannot decide identity at all
+            return;
+        };
+        assert!(holds_copy(change), "the recorded sequence must still be current");
+
+        // restoring the same text advances the counter, and the recorded copy follows it
+        keep_copy_current();
+        let Some(restored) = fresh_change(Instant::now(), Duration::from_secs(1)) else {
+            return;
+        };
+        assert!(holds_copy(restored), "a restore of the same text keeps the copy");
+
+        // text written after the recorded copy belongs to a different sequence
+        let stale = Change {
+            sequence: restored.sequence.wrapping_sub(1),
+            observed_at: restored.observed_at,
+        };
+        assert!(!holds_copy(stale), "a superseded sequence must not match");
+        clear();
+    }
+
+    #[test]
+    fn keeping_a_copy_current_without_one_records_nothing() {
+        clear();
+        keep_copy_current();
+        assert!(fresh_change(Instant::now(), Duration::from_secs(1)).is_none());
         clear();
     }
 

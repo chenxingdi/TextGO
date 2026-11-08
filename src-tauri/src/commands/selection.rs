@@ -151,6 +151,12 @@ fn capture_context(
     if context.paragraph.trim().is_empty() && clipboard_allowed {
         let max_age = Duration::from_secs(CONTEXT_CLIPBOARD_MAX_AGE_SECS.load(Ordering::Relaxed));
         match clipboard_watch::fresh_change(selection_at, max_age) {
+            // the recorded moment belongs to the text it copied; anything written afterwards leaves
+            // content on the clipboard that the moment does not describe
+            Some(change) if !clipboard_watch::holds_copy(change) => debug!(
+                "Clipboard changed after copy #{}, not used as context",
+                change.sequence
+            ),
             Some(change) => {
                 // prefer the text this selection already read back as a backup; reading again is
                 // only needed when the selection came from the native path

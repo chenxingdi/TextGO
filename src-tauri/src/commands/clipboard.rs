@@ -148,6 +148,9 @@ where
                 let _own = clipboard_watch::begin_own_write();
                 Ok(CLIPBOARD.lock()?.as_ref()?.set(contents)?)
             })?;
+            // the text is back where it was, so a copy recorded before the selection still describes
+            // the clipboard; only the sequence that identifies it moved
+            clipboard_watch::keep_copy_current();
         } else {
             clear_clipboard()?;
         }
