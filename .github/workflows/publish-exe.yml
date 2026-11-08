@@ -69,7 +69,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          $tag = "v$VERSION"
+          # environment variables are reached through $env:NAME in PowerShell
+          $tag = "v$env:VERSION"
           $exe = Get-ChildItem src-tauri/target/release/*.exe | Select-Object -First 1
           if (-not $exe) { throw "no executable was built" }
           Write-Host "publishing $tag with $($exe.Name) ($($exe.Length) bytes)"
