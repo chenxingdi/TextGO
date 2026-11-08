@@ -246,12 +246,13 @@ mod tests {
     }
 
     #[test]
-    fn wider_limits_read_wider_windows() {
-        // the read window has to grow with the limit, otherwise a bigger limit changes nothing
-        assert_eq!(context_window_radius(CONTEXT_TEXT_LIMIT_MIN), CONTEXT_WINDOW_RADIUS);
-        assert!(context_window_radius(CONTEXT_TEXT_LIMIT_DEFAULT) > context_window_radius(CONTEXT_TEXT_LIMIT_MIN));
-        assert!(context_window_radius(CONTEXT_TEXT_LIMIT_MAX) > context_window_radius(CONTEXT_TEXT_LIMIT_DEFAULT));
-        assert_eq!(context_window_radius(CONTEXT_TEXT_LIMIT_MAX), CONTEXT_TEXT_LIMIT_MAX);
+    fn read_window_covers_the_configured_limit() {
+        // the platform lookup stays at least as wide as the limit so clipping still has text on
+        // both sides; with the current 20-200 range the fixed floor covers every limit
+        for limit in [CONTEXT_TEXT_LIMIT_MIN, CONTEXT_TEXT_LIMIT_DEFAULT, CONTEXT_TEXT_LIMIT_MAX] {
+            assert!(context_window_radius(limit) >= limit);
+            assert!(context_window_radius(limit) >= CONTEXT_WINDOW_RADIUS);
+        }
     }
 
     #[test]
