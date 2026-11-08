@@ -239,7 +239,8 @@ unsafe fn capture_pixels(area: &CaptureArea) -> Result<Vec<u8>, AppError> {
 /// @param pixels - pixels to convert in place
 #[cfg(target_os = "windows")]
 fn swap_channels(pixels: &mut [u8]) {
-    for pixel in pixels.chunks_exact_mut(4) {
+    // whole pixels only; the buffer was sized from the image dimensions above
+    for pixel in pixels.as_chunks_mut::<4>().0 {
         pixel.swap(0, 2);
         pixel[3] = 255;
     }
