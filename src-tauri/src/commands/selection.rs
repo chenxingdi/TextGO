@@ -9,7 +9,7 @@ use crate::error::AppError;
 use crate::platform::{self, SelectionContext};
 use crate::{CONTEXT_LIMIT, FORCE_GET_SELECTION, SELECTION_CONTEXT_CACHE, SELECTION_TEXT_CACHE};
 use log::{debug, warn};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::time::Duration;
 #[cfg(target_os = "windows")]
 use std::time::Instant;
@@ -35,6 +35,10 @@ const CLIPBOARD_READ_ATTEMPTS: usize = 5;
 // it, so this attempt only has to cover a copy that works
 #[cfg(not(target_os = "macos"))]
 const SECOND_ATTEMPT_WAIT: Duration = Duration::from_millis(400);
+
+// copy combination that produced text last, so it is tried first on the next selection
+const COPY_COMBINATION_UNKNOWN: u8 = u8::MAX;
+static COPY_COMBINATION: AtomicU8 = AtomicU8::new(COPY_COMBINATION_UNKNOWN);
 
 /// Get selected text.
 #[tauri::command]
@@ -129,11 +133,24 @@ pub fn set_context_limit(limit: usize) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Whether the next copy attempt should send Ctrl+Insert.
+///
+/// The combination that produced text last time goes first: applications implement one of the two,
+/// and starting with the one the source application ignores costs a full timeout.
+///
+/// @returns whether Ctrl+Insert is tried first
+fn preferred_copy_insert() -> bool {
+    match COPY_COMBINATION.load(Ordering::Relaxed) {
+        COPY_COMBINATION_UNKNOWN => configured_copy_insert(),
+        known => known == 1,
+    }
+}
+
 /// Get selected text through clipboard.
 ///
 /// The two copy combinations are tried one after the other: applications implement at most one of
-/// them, and a reader that ignores Ctrl+C still copies with Ctrl+Insert. The configured combination
-/// goes first, so the common case keeps its single attempt.
+/// them, and a reader that ignores Ctrl+C still copies with Ctrl+Insert. The combination that worked
+/// last time goes first, so the common case keeps its single attempt.
 async fn get_selection_fallback(app: AppHandle, mouse: bool) -> Result<String, AppError> {
     if let Ok(mut cache) = SELECTION_TEXT_CACHE.lock() {
         *cache = None;
@@ -142,16 +159,22 @@ async fn get_selection_fallback(app: AppHandle, mouse: bool) -> Result<String, A
     // use backup-operation-restore mode
     with_clipboard_backup(|| async move {
         let max_wait_time = Duration::from_millis(MAX_WAIT_TIME.load(Ordering::Relaxed));
-        let configured =
-            copy_selection(&app, mouse, configured_copy_insert(), max_wait_time).await;
+        let configured = copy_selection(&app, mouse, preferred_copy_insert(), max_wait_time).await;
 
         #[cfg(target_os = "macos")]
         let selected_text = configured;
 
         #[cfg(not(target_os = "macos"))]
         let selected_text = if configured.is_empty() {
-            debug!("Configured copy shortcut produced no text, retrying with the other one");
-            copy_selection(&app, mouse, !configured_copy_insert(), SECOND_ATTEMPT_WAIT).await
+            debug!("Preferred copy shortcut produced no text, retrying with the other one");
+            let other = !preferred_copy_insert();
+            let text = copy_selection(&app, mouse, other, SECOND_ATTEMPT_WAIT).await;
+            if !text.is_empty() {
+                // starting with the combination the application ignores costs a full timeout on
+                // every selection, so the working one is remembered
+                COPY_COMBINATION.store(u8::from(other), Ordering::Relaxed);
+            }
+            text
         } else {
             configured
         };

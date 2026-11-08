@@ -4,7 +4,7 @@ use crate::platform::{
     clip_around_selection, context_paragraph_cap, context_window_radius, is_browser, paragraph_around,
     SelectionContext,
 };
-use log::debug;
+use log::{debug, info};
 use std::fs;
 use std::path::Path;
 use std::sync::mpsc;
@@ -287,7 +287,7 @@ fn text_node_context(selection: &str, limit: usize) -> Option<String> {
     let joined = names[start..end].join("\n\n");
     let paragraph = clip_around_selection(&joined, &names[matched], limit);
 
-    debug!(
+    info!(
         "Recovered context from {} of {} text controls",
         end - start,
         names.len()
@@ -366,7 +366,7 @@ fn document_context(title: &str, selection: &str, limit: usize) -> Option<String
 
     let context = document::context_for(title, selection, limit);
     if context.is_some() {
-        debug!("Recovered context from the document named by the window title");
+        info!("Recovered context from the document named by the window title");
     }
     context
 }
