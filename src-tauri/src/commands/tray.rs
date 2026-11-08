@@ -2,7 +2,7 @@ use crate::{error::AppError, SETTINGS_STORE};
 use serde::Deserialize;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager};
 use tauri_plugin_store::StoreExt;
 
 const DEFAULT_LOCALE: &str = "en";
@@ -140,30 +140,36 @@ pub fn initialize_tray(app: &AppHandle) -> Result<(), AppError> {
 }
 
 /// Persist the application locale and update existing tray menu items in place.
+///
+/// The frontend syncs the language while the window is still loading, which can happen before the
+/// tray exists; the menu is then built from the saved locale by [`initialize_tray`], so a missing
+/// tray only means there is nothing to relabel yet.
+///
+/// @param app - application handle
+/// @param locale - locale to save and apply
 #[tauri::command]
-pub fn set_tray_locale(
-    app: AppHandle,
-    menu: State<'_, TrayMenu>,
-    locale: String,
-) -> Result<(), AppError> {
+pub fn set_tray_locale(app: AppHandle, locale: String) -> Result<(), AppError> {
     let locale = supported_locale(&locale)
         .ok_or_else(|| AppError::from(format!("Unsupported locale: {locale}")))?;
-    let labels = load_tray_labels(locale)?;
 
-    for (id, text) in [
-        ("main_window", labels.tray_main_window),
-        ("shortcuts", labels.tray_shortcuts),
-        ("history", labels.tray_history),
-        ("settings", labels.tray_settings),
-        ("quit", labels.tray_quit),
-    ] {
-        let item = menu
-            .0
-            .get(id)
-            .ok_or_else(|| AppError::from(format!("Tray menu item not found: {id}")))?;
-        item.as_menuitem()
-            .ok_or_else(|| AppError::from(format!("Invalid tray menu item: {id}")))?
-            .set_text(text)?;
+    if let Some(menu) = app.try_state::<TrayMenu>() {
+        let labels = load_tray_labels(locale)?;
+
+        for (id, text) in [
+            ("main_window", labels.tray_main_window),
+            ("shortcuts", labels.tray_shortcuts),
+            ("history", labels.tray_history),
+            ("settings", labels.tray_settings),
+            ("quit", labels.tray_quit),
+        ] {
+            let item = menu
+                .0
+                .get(id)
+                .ok_or_else(|| AppError::from(format!("Tray menu item not found: {id}")))?;
+            item.as_menuitem()
+                .ok_or_else(|| AppError::from(format!("Invalid tray menu item: {id}")))?
+                .set_text(text)?;
+        }
     }
 
     let store = app.store(SETTINGS_STORE)?;
