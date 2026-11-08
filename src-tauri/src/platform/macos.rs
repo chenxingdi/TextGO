@@ -453,8 +453,10 @@ pub fn get_selection() -> Result<String, AppError> {
 /// Capture the title, identifier, website and surrounding text of the current selection.
 ///
 /// @param limit - maximum number of characters kept from the text around the selection
+/// @param _selection - selected text; the macOS accessibility tree reports the selection itself,
+///   so the document and text-control fallbacks the Windows path needs do not apply here
 /// @returns best-effort context; parts that cannot be read stay empty
-pub fn get_selection_context(limit: usize) -> Result<SelectionContext, AppError> {
+pub fn get_selection_context(limit: usize, _selection: &str) -> Result<SelectionContext, AppError> {
     let mut context = SelectionContext {
         app_id: get_frontmost_app_id().unwrap_or_default(),
         ..SelectionContext::default()

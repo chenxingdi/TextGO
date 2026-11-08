@@ -1,10 +1,14 @@
+use crate::document;
 use crate::error::AppError;
 use crate::platform::{
     clip_around_selection, context_paragraph_cap, context_window_radius, is_browser, paragraph_around,
     SelectionContext,
 };
+use log::debug;
 use std::fs;
 use std::path::Path;
+use std::sync::mpsc;
+use std::time::Duration;
 use windows::core::{Interface, Owned, PWSTR};
 use windows::Win32::Foundation::{HWND, MAX_PATH};
 use windows::Win32::System::Com::{
@@ -19,7 +23,7 @@ use windows::Win32::UI::Accessibility::{
     TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start, TextUnit_Character,
     TextUnit_Paragraph, TreeScope_Descendants, UIA_ControlTypePropertyId,
     UIA_DocumentControlTypeId, UIA_EditControlTypeId, UIA_LegacyIAccessiblePatternId,
-    UIA_TextPatternId, UIA_ValuePatternId,
+    UIA_TextControlTypeId, UIA_TextPatternId, UIA_ValuePatternId,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetCursorInfo, GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW,
@@ -48,6 +52,15 @@ const MAX_VALID_COORDINATE: f64 = 10000.0;
 // editable legacy control roles
 const ROLE_SYSTEM_TEXT: u32 = 42;
 const ROLE_SYSTEM_COMBOBOX: u32 = 46;
+
+// text controls inspected when no text pattern carries the selection
+const MAX_TEXT_NODES: i32 = 1200;
+
+// how long the text control search may take before the capture gives up on it
+const TEXT_NODE_BUDGET: Duration = Duration::from_millis(400);
+
+// text controls joined around the matching one
+const TEXT_NODE_NEIGHBOURS: usize = 2;
 
 // import SafeArray functions from oleaut32.dll
 #[link(name = "oleaut32")]
@@ -194,8 +207,9 @@ pub fn get_selection() -> Result<String, AppError> {
 /// Capture the title, identifier, website and surrounding text of the current selection.
 ///
 /// @param limit - maximum number of characters kept from the text around the selection
+/// @param selection - selected text, used to locate it when the accessibility tree has no selection
 /// @returns best-effort context; parts that cannot be read stay empty
-pub fn get_selection_context(limit: usize) -> Result<SelectionContext, AppError> {
+pub fn get_selection_context(limit: usize, selection: &str) -> Result<SelectionContext, AppError> {
     unsafe {
         // initialize COM
         let _com = ComGuard::new()?;
@@ -211,8 +225,19 @@ pub fn get_selection_context(limit: usize) -> Result<SelectionContext, AppError>
             context.title = get_window_title(window).unwrap_or_default();
         }
 
-        // text around the selection
+        // text around the selection, read through the accessibility text pattern
         context.paragraph = read_selected_paragraph(limit).unwrap_or_default();
+
+        let selection = selection.trim();
+
+        // readers expose neither a text pattern nor a selection, so the text is recovered from the
+        // paragraph text controls they publish, or from the document they have open
+        if context.paragraph.trim().is_empty() && !selection.is_empty() && !is_browser(&context.app_id)
+        {
+            context.paragraph = text_node_context(selection, limit)
+                .or_else(|| document_context(&context.title, selection, limit))
+                .unwrap_or_default();
+        }
 
         // the address bar lookup is only meaningful in browsers and is comparatively slow
         if is_browser(&context.app_id) {
@@ -221,6 +246,129 @@ pub fn get_selection_context(limit: usize) -> Result<SelectionContext, AppError>
 
         Ok(context)
     }
+}
+
+/// Read the text around a selection from the text controls below the foreground window.
+///
+/// Reader applications split a page into one text control per paragraph and publish those names
+/// instead of a text pattern, so the paragraph is found by its text: the control whose name carries
+/// the selection is the paragraph, and the controls around it widen the context.
+///
+/// @param selection - selected text, already read through the clipboard
+/// @param limit - maximum number of characters kept from the resulting text
+/// @returns text around the selection, or none when no control carries the selection
+fn text_node_context(selection: &str, limit: usize) -> Option<String> {
+    let needle = document::flat_text(selection);
+    if needle.chars().count() < document::MIN_SELECTION_CHARS {
+        return None;
+    }
+
+    let window = unsafe { GetForegroundWindow() };
+    if window.is_invalid() {
+        return None;
+    }
+
+    // The walk runs on its own thread. UIA answers arrive from another process and a single call
+    // can block for seconds when that process does not answer, so the popup waits a bounded time
+    // and gives up; the window handle is captured first because the popup takes focus afterwards.
+    let (sender, receiver) = mpsc::channel();
+    let handle = window.0 as isize;
+    std::thread::spawn(move || {
+        let names = text_control_names(HWND(handle as *mut _));
+        let _ = sender.send(names);
+    });
+
+    let names = receiver.recv_timeout(TEXT_NODE_BUDGET).ok()?;
+    let matched = names
+        .iter()
+        .position(|name| document::flat_text(name).contains(&needle))?;
+    let start = matched.saturating_sub(TEXT_NODE_NEIGHBOURS);
+    let end = (matched + TEXT_NODE_NEIGHBOURS + 1).min(names.len());
+    let joined = names[start..end].join("\n\n");
+    let paragraph = clip_around_selection(&joined, &names[matched], limit);
+
+    debug!(
+        "Recovered context from {} of {} text controls",
+        end - start,
+        names.len()
+    );
+    (!paragraph.trim().is_empty()).then_some(paragraph)
+}
+
+/// Collect the names of the text controls below a window.
+///
+/// Paragraph text controls report their content as the element name; layout spacers report a
+/// non-breaking space and are dropped.
+///
+/// @param window - window whose accessibility tree is read
+/// @returns trimmed element names in tree order, empty when the tree cannot be read
+fn text_control_names(window: HWND) -> Vec<String> {
+    unsafe {
+        let Ok(_com) = ComGuard::new() else {
+            return Vec::new();
+        };
+
+        let automation: IUIAutomation = match CoCreateInstance(&CUIAutomation, None, CLSCTX_ALL) {
+            Ok(automation) => automation,
+            Err(_) => return Vec::new(),
+        };
+
+        let root = match automation.ElementFromHandle(window) {
+            Ok(root) => root,
+            Err(_) => return Vec::new(),
+        };
+
+        let condition = match automation
+            .CreatePropertyCondition(UIA_ControlTypePropertyId, &UIA_TextControlTypeId.0.into())
+        {
+            Ok(condition) => condition,
+            Err(_) => return Vec::new(),
+        };
+
+        let elements = match root.FindAll(TreeScope_Descendants, &condition) {
+            Ok(elements) => elements,
+            Err(_) => return Vec::new(),
+        };
+
+        let count = elements.Length().unwrap_or(0).min(MAX_TEXT_NODES);
+        let mut names: Vec<String> = Vec::new();
+
+        for index in 0..count {
+            let Ok(element) = elements.GetElement(index) else {
+                continue;
+            };
+            let Ok(name) = element.CurrentName() else {
+                continue;
+            };
+
+            let name = name.to_string();
+            let name = name.trim();
+            if name.is_empty() || name == "\u{a0}" {
+                continue;
+            }
+            names.push(name.to_string());
+        }
+
+        names
+    }
+}
+
+/// Read the text around a selection out of the document the foreground window shows.
+///
+/// @param title - caption of the foreground window
+/// @param selection - selected text
+/// @param limit - maximum number of characters kept from the resulting text
+/// @returns text around the selection, or none when no document is named or readable
+fn document_context(title: &str, selection: &str, limit: usize) -> Option<String> {
+    if title.is_empty() {
+        return None;
+    }
+
+    let context = document::context_for(title, selection, limit);
+    if context.is_some() {
+        debug!("Recovered context from the document named by the window title");
+    }
+    context
 }
 
 /// Read the paragraph around the selection of the focused element.

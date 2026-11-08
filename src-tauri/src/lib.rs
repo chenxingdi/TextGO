@@ -1,4 +1,6 @@
 mod commands;
+#[cfg(target_os = "windows")]
+mod document;
 mod error;
 mod handlers;
 mod platform;
