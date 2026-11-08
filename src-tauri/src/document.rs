@@ -29,9 +29,6 @@ const MAX_DOCUMENT_BYTES: u64 = 160 * 1024 * 1024;
 /// Characters kept from one extracted document.
 const MAX_DOCUMENT_CHARS: usize = 8 * 1024 * 1024;
 
-/// Shortest selection worth searching for; below this a match says nothing about position.
-pub(crate) const MIN_SELECTION_CHARS: usize = 4;
-
 /// Longest prefix of the selection used for locating it.
 ///
 /// A two-column selection comes out of the clipboard in a different order than the page reads it,
@@ -107,81 +104,9 @@ pub fn context_for(title: &str, selection: &str, limit: usize) -> Option<String>
         .and_then(|pages| locate_in_pages(&pages, selection, document.page, limit))
 }
 
-/// Flatten a text fragment into a form that survives copying.
-///
-/// Selections arrive from the clipboard with line breaks, extracted pages carry line-end
-/// hyphenation, and both differ in spacing. Whitespace, hyphenation and unsupported glyphs are
-/// removed and the case is folded, so a copied word and its typeset original compare equal.
-///
-/// @param text - text to flatten
-/// @returns whitespace-free, case-folded text
-pub(crate) fn flat_text(text: &str) -> String {
-    squash(text).0
-}
-
-/// Flatten text and keep the byte position of every retained character.
-///
-/// The offsets turn a match in the flattened text back into a slice of the original, which is what
-/// the excerpt is cut from.
-///
-/// @param text - text to flatten
-/// @returns flattened text and the original byte offset of each of its characters
-fn squash(text: &str) -> (String, Vec<usize>) {
-    let characters: Vec<(usize, char)> = text.char_indices().collect();
-    let mut squashed = String::with_capacity(text.len());
-    let mut offsets = Vec::with_capacity(text.len());
-
-    for (index, (offset, character)) in characters.iter().enumerate() {
-        // soft hyphens, byte order marks and the noncharacters PDF extraction leaves behind carry
-        // no meaning for a comparison
-        if character.is_whitespace()
-            || matches!(
-                *character,
-                '\u{ad}' | '\u{feff}' | '\u{fffe}' | '\u{fffd}' | '\u{200b}'
-            )
-        {
-            continue;
-        }
-
-        // a hyphen at the end of a line joins a word the typesetter had to split
-        if *character == '-' {
-            let next = characters.get(index + 1).map(|(_, next)| *next);
-            if next.is_none_or(char::is_whitespace) {
-                continue;
-            }
-        }
-
-        for folded in character.to_lowercase() {
-            if let Some(expansion) = expand_ligature(folded) {
-                for expanded in expansion.chars() {
-                    squashed.push(expanded);
-                    offsets.push(*offset);
-                }
-            } else {
-                squashed.push(folded);
-                offsets.push(*offset);
-            }
-        }
-    }
-
-    (squashed, offsets)
-}
-
-/// Spell out a ligature so the copied and the typeset spelling compare equal.
-///
-/// @param character - character to expand
-/// @returns ASCII expansion, or none when the character is not a ligature
-fn expand_ligature(character: char) -> Option<&'static str> {
-    match character {
-        '\u{fb00}' => Some("ff"),
-        '\u{fb01}' => Some("fi"),
-        '\u{fb02}' => Some("fl"),
-        '\u{fb03}' => Some("ffi"),
-        '\u{fb04}' => Some("ffl"),
-        '\u{fb05}' | '\u{fb06}' => Some("st"),
-        _ => None,
-    }
-}
+// text normalization lives in its own module because macOS needs the same comparison helpers
+pub(crate) use crate::text::{flat_text, MIN_SELECTION_CHARS};
+use crate::text::squash;
 
 /// Find the selection inside extracted text and return the text around it.
 ///

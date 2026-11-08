@@ -5,16 +5,16 @@ mod windows;
 
 #[cfg(target_os = "macos")]
 pub use macos::{
-    activate_focus_target, get_app_id, get_cursor_location, get_focus_target, get_frontmost_app_id,
-    get_frontmost_url, get_selection, get_selection_context, is_cursor_editable,
-    is_focus_target_active, is_ibeam_cursor, select_backward_chars, FocusTarget,
+    activate_focus_target, clipboard_change_count, get_app_id, get_cursor_location,
+    get_focus_target, get_frontmost_app_id, get_frontmost_url, get_selection, get_selection_context,
+    is_cursor_editable, is_focus_target_active, is_ibeam_cursor, select_backward_chars, FocusTarget,
 };
 #[cfg(target_os = "windows")]
 pub use windows::{
-    activate_focus_target, get_app_id, get_cursor_location, get_focus_target, get_frontmost_app_id,
-    get_frontmost_url, get_selection, get_selection_context, get_text_scale_factor,
-    is_cursor_editable, is_focus_target_active, is_ibeam_cursor, select_backward_chars,
-    FocusTarget,
+    activate_focus_target, clipboard_change_count, get_app_id, get_cursor_location,
+    get_focus_target, get_frontmost_app_id, get_frontmost_url, get_selection, get_selection_context,
+    get_text_scale_factor, is_cursor_editable, is_focus_target_active, is_ibeam_cursor,
+    select_backward_chars, FocusTarget,
 };
 
 /// Smallest selectable surrounding text limit.
@@ -101,6 +101,48 @@ pub fn clip_around_selection(text: &str, selection: &str, limit: usize) -> Strin
         }
         None => (0, limit.min(total)),
     };
+
+    let mut clipped: String = trimmed.chars().skip(start).take(end - start).collect();
+    if start > 0 {
+        clipped.insert(0, '…');
+    }
+    if end < total {
+        clipped.push('…');
+    }
+    clipped
+}
+
+/// Keep a bounded window of text around a known position.
+///
+/// The clipboard channel knows exactly where the selection sits in the copied text, so it does not
+/// need to search for it again and cannot fail on a whitespace difference.
+///
+/// @param text - text the selection was found in
+/// @param byte_offset - byte offset of the selection inside `text`, on a character boundary
+/// @param selection_chars - length of the selection in characters
+/// @param limit - maximum number of characters kept
+/// @returns clipped text with ellipses where an end was cut
+pub fn clip_at(text: &str, byte_offset: usize, selection_chars: usize, limit: usize) -> String {
+    let trimmed = text.trim();
+    let total = trimmed.chars().count();
+    if total <= limit {
+        return trimmed.to_string();
+    }
+
+    // the offset was measured on the untrimmed text, so move it into the trimmed coordinates
+    let leading = text
+        .chars()
+        .take_while(|character| character.is_whitespace())
+        .count();
+    let offset = text
+        .get(..byte_offset)
+        .map(|head| head.chars().count())
+        .unwrap_or(0)
+        .saturating_sub(leading);
+
+    let half = limit.saturating_sub(selection_chars) / 2;
+    let start = offset.saturating_sub(half).min(total.saturating_sub(limit));
+    let end = (start + limit).min(total);
 
     let mut clipped: String = trimmed.chars().skip(start).take(end - start).collect();
     if start > 0 {
@@ -229,6 +271,43 @@ mod tests {
         let clipped = clip_around_selection(&text, "中文中文", 11);
         assert!(clipped.chars().all(|c| c == '中' || c == '文' || c == '…'));
         assert_eq!(clipped.chars().count(), 12);
+    }
+
+    #[test]
+    fn clip_at_keeps_the_window_around_a_known_offset() {
+        let text = format!("{}needle{}", "前".repeat(100), "后".repeat(100));
+        let offset = text.find("needle").expect("needle");
+        let clipped = clip_at(&text, offset, 6, 40);
+        assert!(clipped.starts_with('…'));
+        assert!(clipped.ends_with('…'));
+        assert!(clipped.contains("needle"));
+        assert_eq!(clipped.chars().count(), 42);
+    }
+
+    #[test]
+    fn clip_at_ignores_leading_whitespace() {
+        let text = format!("   {}needle{}", "前".repeat(100), "后".repeat(100));
+        let offset = text.find("needle").expect("needle");
+        let clipped = clip_at(&text, offset, 6, 40);
+        // the trimmed text starts after the blank prefix, so the window must still be centered
+        let needle_at = clipped.chars().position(|c| c == 'n').expect("needle start");
+        assert!(needle_at <= 20, "window is off-centre: {clipped}");
+    }
+
+    #[test]
+    fn clip_at_short_text_is_returned_trimmed() {
+        assert_eq!(clip_at("  text with needle  ", 12, 6, 200), "text with needle");
+    }
+
+    #[test]
+    fn clip_at_handles_a_selection_longer_than_the_limit() {
+        let text = format!("{}target{}", "a".repeat(50), "b".repeat(50));
+        let offset = text.find("target").expect("target");
+        let clipped = clip_at(&text, offset, 300, 100);
+        // the selection does not fit, so the window starts at the selection and runs to the limit
+        assert!(clipped.starts_with('…'));
+        assert!(clipped.contains("target"));
+        assert_eq!(clipped.chars().count(), 101);
     }
 
     #[test]

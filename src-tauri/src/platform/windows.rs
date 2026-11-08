@@ -14,6 +14,7 @@ use windows::Win32::Foundation::{HWND, MAX_PATH};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_APARTMENTTHREADED,
 };
+use windows::Win32::System::DataExchange::GetClipboardSequenceNumber;
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
 };
@@ -181,6 +182,16 @@ fn get_selected_range(element: &IUIAutomationElement) -> Result<IUIAutomationTex
             .GetElement(0)
             .map_err(|_| "Failed to get first selection range".into())
     }
+}
+
+/// Clipboard change counter.
+///
+/// Reading it never opens the clipboard, so the change monitor can poll it without disturbing
+/// another application that is still publishing a copy.
+///
+/// @returns monotonically increasing counter value
+pub fn clipboard_change_count() -> Option<u64> {
+    Some(unsafe { GetClipboardSequenceNumber() } as u64)
 }
 
 /// Get selected text in currently focused element.

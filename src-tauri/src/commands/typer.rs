@@ -68,6 +68,9 @@ pub async fn enter_text(
     if clipboard.unwrap_or(false) {
         do_enter_text().await
     } else {
-        with_clipboard_backup(do_enter_text).await
+        // the backup also reports what it replaced, which only the selection path consumes
+        with_clipboard_backup(do_enter_text)
+            .await
+            .map(|(result, _previous_text)| result)
     }
 }

@@ -1,3 +1,5 @@
+use crate::clipboard_context;
+use crate::clipboard_watch;
 #[cfg(not(target_os = "windows"))]
 use crate::commands::clipboard::clear_clipboard;
 #[cfg(target_os = "windows")]
@@ -7,12 +9,14 @@ use crate::commands::keyboard::{configured_copy_insert, send_copy_keys_with};
 use crate::commands::shortcut::ShortcutHandlerGuard;
 use crate::error::AppError;
 use crate::platform::{self, SelectionContext};
-use crate::{CONTEXT_LIMIT, FORCE_GET_SELECTION, SELECTION_CONTEXT_CACHE, SELECTION_TEXT_CACHE};
+use crate::{
+    CONTEXT_CLIPBOARD, CONTEXT_CLIPBOARD_AGE_MAX, CONTEXT_CLIPBOARD_AGE_MIN,
+    CONTEXT_CLIPBOARD_MAX_AGE_SECS, CONTEXT_LIMIT, FORCE_GET_SELECTION, SELECTION_CONTEXT_CACHE,
+    SELECTION_TEXT_CACHE,
+};
 use log::{debug, warn};
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
-use std::time::Duration;
-#[cfg(target_os = "windows")]
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tauri::AppHandle;
 
 // maximum wait time in milliseconds for clipboard to update
@@ -41,8 +45,27 @@ const COPY_COMBINATION_UNKNOWN: u8 = u8::MAX;
 static COPY_COMBINATION: AtomicU8 = AtomicU8::new(COPY_COMBINATION_UNKNOWN);
 
 /// Get selected text.
+///
+/// @param app - application handle
+/// @param mouse - whether the selection came from a mouse gesture
+/// @returns selected text
 #[tauri::command]
 pub async fn get_selection(app: AppHandle, mouse: Option<bool>) -> Result<String, AppError> {
+    // catch a copy the monitor has not polled yet; the monitor runs every 250 ms, and looking once
+    // here keeps a copy made moments before the selection from being missed
+    clipboard_watch::observe_now();
+
+    // the moment the user selected, used to decide whether a copy is still fresh enough
+    let selection_at = Instant::now();
+
+    // everything this capture writes (the selection copy and the restore) advances the counter and
+    // must not be mistaken for a copy the user made
+    let _observation = clipboard_watch::suspend_observation();
+
+    // the channel is available to every trigger; the freshness window is what keeps it meaningful
+    let clipboard_allowed =
+        CONTEXT_CLIPBOARD.load(Ordering::Relaxed) && CONTEXT_LIMIT.load(Ordering::Relaxed) > 0;
+
     // suspend shortcut handling to avoid interference
     let _guard = ShortcutHandlerGuard::suspend();
 
@@ -59,7 +82,7 @@ pub async fn get_selection(app: AppHandle, mouse: Option<bool>) -> Result<String
                 *cache = None;
             }
 
-            return Ok(with_context(text));
+            return Ok(with_context(text, None, selection_at, clipboard_allowed));
         }
     }
 
@@ -70,8 +93,8 @@ pub async fn get_selection(app: AppHandle, mouse: Option<bool>) -> Result<String
 
     // if native API fails, fall back to clipboard method
     warn!("Failed to get selection natively, fallback to clipboard method");
-    let text = get_selection_fallback(app, mouse.unwrap_or(false)).await?;
-    Ok(with_context(text))
+    let (text, previous_text) = get_selection_fallback(app, mouse.unwrap_or(false)).await?;
+    Ok(with_context(text, previous_text, selection_at, clipboard_allowed))
 }
 
 /// Capture the context of the current selection before returning the text to the frontend.
@@ -82,9 +105,17 @@ pub async fn get_selection(app: AppHandle, mouse: Option<bool>) -> Result<String
 /// exists.
 ///
 /// @param text - selected text that was just obtained
+/// @param previous_text - text the clipboard held before the selection copy, if any
+/// @param selection_at - moment the user made the selection
+/// @param clipboard_allowed - whether the clipboard channel is enabled by the settings
 /// @returns the same text, unchanged
-fn with_context(text: String) -> String {
-    capture_context(&text);
+fn with_context(
+    text: String,
+    previous_text: Option<String>,
+    selection_at: Instant,
+    clipboard_allowed: bool,
+) -> String {
+    capture_context(&text, previous_text, selection_at, clipboard_allowed);
     text
 }
 
@@ -94,20 +125,60 @@ fn with_context(text: String) -> String {
 /// The capture is best-effort: failures only leave the context empty and never block the selection.
 ///
 /// @param selection - selected text, used by the fallbacks that locate it in the application
-fn capture_context(selection: &str) {
+/// @param previous_text - text the clipboard held before the selection copy, if any
+/// @param selection_at - moment the user made the selection
+/// @param clipboard_allowed - whether the clipboard channel is enabled by the settings
+fn capture_context(
+    selection: &str,
+    previous_text: Option<String>,
+    selection_at: Instant,
+    clipboard_allowed: bool,
+) {
     let limit = CONTEXT_LIMIT.load(Ordering::Relaxed);
     if limit == 0 {
         return;
     }
 
-    match platform::get_selection_context(limit, selection) {
-        Ok(context) => {
-            debug!("Captured selection context from {:?}", context.app_id);
-            if let Ok(mut cache) = SELECTION_CONTEXT_CACHE.lock() {
-                *cache = Some(context);
-            }
+    let mut context = match platform::get_selection_context(limit, selection) {
+        Ok(context) => context,
+        Err(error) => {
+            debug!("Failed to capture selection context: {}", error);
+            return;
         }
-        Err(error) => debug!("Failed to capture selection context: {}", error),
+    };
+
+    // surrounding text from the accessibility tree always wins; the clipboard is only a fallback
+    if context.paragraph.trim().is_empty() && clipboard_allowed {
+        let max_age = Duration::from_secs(CONTEXT_CLIPBOARD_MAX_AGE_SECS.load(Ordering::Relaxed));
+        match clipboard_watch::fresh_change(selection_at, max_age) {
+            Some(change) => {
+                // prefer the text this selection already read back as a backup; reading again is
+                // only needed when the selection came from the native path
+                let copied = previous_text
+                    .or_else(|| get_clipboard_text().ok())
+                    .filter(|copied| !copied.trim().is_empty());
+
+                if let Some(copied) = copied {
+                    if let Some(paragraph) = clipboard_context::paragraph_in(&copied, selection, limit)
+                    {
+                        debug!(
+                            "Context recovered from clipboard change #{}",
+                            change.sequence
+                        );
+                        context.paragraph = paragraph;
+                    }
+                }
+            }
+            None => debug!(
+                "Clipboard change is older than {}s, not used as context",
+                max_age.as_secs()
+            ),
+        }
+    }
+
+    debug!("Captured selection context from {:?}", context.app_id);
+    if let Ok(mut cache) = SELECTION_CONTEXT_CACHE.lock() {
+        *cache = Some(context);
     }
 }
 
@@ -133,6 +204,29 @@ pub fn set_context_limit(limit: usize) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Enable or disable using clipboard copies as surrounding text.
+///
+/// @param enabled - whether copies made just before a selection may provide context
+#[tauri::command]
+pub fn set_context_clipboard(enabled: bool) -> Result<(), AppError> {
+    CONTEXT_CLIPBOARD.store(enabled, Ordering::Relaxed);
+    if !enabled {
+        // turning the channel off must not leave an observed copy behind
+        clipboard_watch::clear();
+    }
+    Ok(())
+}
+
+/// Set how long a clipboard copy stays usable as surrounding text.
+///
+/// @param seconds - validity window in seconds, clamped to the supported range
+#[tauri::command]
+pub fn set_context_clipboard_max_age(seconds: u64) -> Result<(), AppError> {
+    let seconds = seconds.clamp(CONTEXT_CLIPBOARD_AGE_MIN, CONTEXT_CLIPBOARD_AGE_MAX);
+    CONTEXT_CLIPBOARD_MAX_AGE_SECS.store(seconds, Ordering::Relaxed);
+    Ok(())
+}
+
 /// Whether the next copy attempt should send Ctrl+Insert.
 ///
 /// The combination that produced text last time goes first: applications implement one of the two,
@@ -151,7 +245,14 @@ fn preferred_copy_insert() -> bool {
 /// The two copy combinations are tried one after the other: applications implement at most one of
 /// them, and a reader that ignores Ctrl+C still copies with Ctrl+Insert. The combination that worked
 /// last time goes first, so the common case keeps its single attempt.
-async fn get_selection_fallback(app: AppHandle, mouse: bool) -> Result<String, AppError> {
+///
+/// @param app - application handle
+/// @param mouse - whether the selection came from a mouse gesture
+/// @returns the copied selection and the text the clipboard held before the copy
+async fn get_selection_fallback(
+    app: AppHandle,
+    mouse: bool,
+) -> Result<(String, Option<String>), AppError> {
     if let Ok(mut cache) = SELECTION_TEXT_CACHE.lock() {
         *cache = None;
     }

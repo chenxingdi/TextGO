@@ -125,6 +125,11 @@ unsafe fn objc_call_i32(obj: *const c_void, sel: *const c_void) -> i32 {
     objc_call!(obj, sel, i32)
 }
 
+/// Invokes an Objective-C method that returns an NSInteger (64 bit on every supported release).
+unsafe fn objc_call_i64(obj: *const c_void, sel: *const c_void) -> i64 {
+    objc_call!(obj, sel, i64)
+}
+
 /// Invokes an Objective-C method with an i32 argument that returns a pointer.
 unsafe fn objc_call_ptr_i32(obj: *const c_void, sel: *const c_void, arg: i32) -> *const c_void {
     type ObjCFn = unsafe extern "C" fn(*const c_void, *const c_void, i32) -> *const c_void;
@@ -403,6 +408,31 @@ fn get_selected_range(element: &CFType) -> Result<CFRange, AppError> {
         }
 
         Ok(range)
+    }
+}
+
+/// Clipboard change counter.
+///
+/// `NSPasteboard.changeCount` moves whenever any application writes the pasteboard, and reading it
+/// never asks the owner for data, so the change monitor can poll it cheaply.
+///
+/// @returns monotonically increasing counter value
+pub fn clipboard_change_count() -> Option<u64> {
+    unsafe {
+        let pasteboard_class = objc_getClass(c"NSPasteboard".as_ptr());
+        if pasteboard_class.is_null() {
+            return None;
+        }
+
+        let general = sel_registerName(c"generalPasteboard".as_ptr());
+        let pasteboard = objc_call_ptr(pasteboard_class, general);
+        if pasteboard.is_null() {
+            return None;
+        }
+
+        let change_count = sel_registerName(c"changeCount".as_ptr());
+        let count = objc_call_i64(pasteboard, change_count);
+        u64::try_from(count).ok()
     }
 }
 

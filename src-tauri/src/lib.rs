@@ -1,9 +1,12 @@
+mod clipboard_context;
+mod clipboard_watch;
 mod commands;
 #[cfg(target_os = "windows")]
 mod document;
 mod error;
 mod handlers;
 mod platform;
+mod text;
 
 use clipboard_rs::ClipboardContext;
 use commands::*;
@@ -90,6 +93,21 @@ pub static FORCE_GET_SELECTION: AtomicBool = AtomicBool::new(true);
 
 // maximum characters captured from around the selection; zero disables capture
 pub static CONTEXT_LIMIT: AtomicUsize = AtomicUsize::new(0);
+
+// whether a copy made shortly before the selection may provide surrounding text
+pub static CONTEXT_CLIPBOARD: AtomicBool = AtomicBool::new(true);
+
+// how long a clipboard copy stays usable as surrounding text, in seconds
+pub static CONTEXT_CLIPBOARD_MAX_AGE_SECS: AtomicU64 = AtomicU64::new(30);
+
+// shortest selectable validity window for a clipboard copy
+pub const CONTEXT_CLIPBOARD_AGE_MIN: u64 = 10;
+
+// default validity window for a clipboard copy
+pub const CONTEXT_CLIPBOARD_AGE_DEFAULT: u64 = 30;
+
+// longest selectable validity window for a clipboard copy
+pub const CONTEXT_CLIPBOARD_AGE_MAX: u64 = 60;
 
 // global copy key setting (true = Ctrl+C, false = Ctrl+Insert)
 pub static USE_CTRL_C: AtomicBool = AtomicBool::new(false);
@@ -223,6 +241,8 @@ pub fn run() {
             get_selection,
             get_selection_context,
             set_context_limit,
+            set_context_clipboard,
+            set_context_clipboard_max_age,
             get_clipboard_text,
             set_clipboard_text,
             clear_clipboard,
@@ -280,6 +300,25 @@ fn setup_app(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
         };
         CONTEXT_LIMIT.store(limit, Ordering::Relaxed);
     }
+
+    // load the clipboard context setting before the monitor starts, including when the main window
+    // stays hidden in the tray and therefore never syncs it
+    if let Ok(store) = app.store(SETTINGS_STORE) {
+        let enabled = store
+            .get("contextClipboard")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(true);
+        let seconds = store
+            .get("contextClipboardMaxAge")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(CONTEXT_CLIPBOARD_AGE_DEFAULT)
+            .clamp(CONTEXT_CLIPBOARD_AGE_MIN, CONTEXT_CLIPBOARD_AGE_MAX);
+        CONTEXT_CLIPBOARD.store(enabled, Ordering::Relaxed);
+        CONTEXT_CLIPBOARD_MAX_AGE_SECS.store(seconds, Ordering::Relaxed);
+    }
+
+    // start the clipboard change monitor; it only reads the platform counter
+    clipboard_watch::start();
 
     // start mouse event listener
     // https://github.com/Narsil/rdev/issues/165

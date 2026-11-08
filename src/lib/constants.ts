@@ -148,6 +148,15 @@ export const CONTEXT_TEXT_LIMIT = {
 };
 
 /**
+ * How long a clipboard copy stays usable as surrounding text, in seconds.
+ */
+export const CONTEXT_CLIPBOARD_AGE = {
+  min: 10,
+  default: 30,
+  max: 60
+};
+
+/**
  * Popup window default size.
  */
 export const DEFAULT_POPUP_WINDOW_SIZE = {
