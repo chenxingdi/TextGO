@@ -73,6 +73,7 @@ ${m.prompt_variables_tip()}
   let promptText: string = $state('');
   let systemPrompt: string = $state('');
   let contextEnabled: boolean = $state(false);
+  let contextAppend: boolean = $state(false);
   let modelProvider: string = $state(DEFAULT_PROVIDER);
   let modelName: string = $state(DEFAULT_MODEL);
   let translationMode: boolean = $state(false);
@@ -82,8 +83,9 @@ ${m.prompt_variables_tip()}
   let topP: number | undefined = $state(DEFAULT_TOP_P);
   let customParamsJson = $state('{}');
   let customParamsEditor: CodeMirror;
+  // the context variables only exist for actions that enabled context for the session
   let promptPlaceholder = $derived(
-    `${PROMPT_PLACEHOLDER}${CONTEXT_PLACEHOLDER}${translationMode ? TRANSLATION_PLACEHOLDER : ''}`
+    `${PROMPT_PLACEHOLDER}${contextEnabled ? CONTEXT_PLACEHOLDER : ''}${translationMode ? TRANSLATION_PLACEHOLDER : ''}`
   );
   // fill form fields
   const fillForm = (prompt: Prompt) => {
@@ -92,6 +94,7 @@ ${m.prompt_variables_tip()}
     promptText = prompt.prompt;
     systemPrompt = prompt.systemPrompt || '';
     contextEnabled = Boolean(prompt.context);
+    contextAppend = Boolean(prompt.appendContext);
     modelProvider = prompt.provider;
     modelName = prompt.model;
     translationMode = Boolean(prompt.targetLanguage);
@@ -186,6 +189,7 @@ ${m.prompt_variables_tip()}
       prompt.prompt = promptText;
       prompt.systemPrompt = systemPrompt;
       prompt.context = contextEnabled;
+      prompt.appendContext = contextAppend;
       prompt.provider = modelProvider;
       prompt.model = modelName;
       prompt.targetLanguage = translationMode ? targetLanguage || undefined : undefined;
@@ -202,6 +206,7 @@ ${m.prompt_variables_tip()}
         prompt: promptText,
         systemPrompt: systemPrompt,
         context: contextEnabled,
+        appendContext: contextAppend,
         provider: modelProvider,
         model: modelName,
         targetLanguage: translationMode ? targetLanguage || undefined : undefined,
@@ -216,6 +221,7 @@ ${m.prompt_variables_tip()}
       promptText = '';
       systemPrompt = '';
       contextEnabled = false;
+      contextAppend = false;
       modelProvider = DEFAULT_PROVIDER;
       modelName = DEFAULT_MODEL;
       translationMode = false;
@@ -232,9 +238,17 @@ ${m.prompt_variables_tip()}
 </script>
 
 {#snippet contextToggle()}
-  <label class="label min-h-0 cursor-pointer gap-1.5 py-0" title={m.context_auto_inject_tip()}>
+  <label class="label min-h-0 cursor-pointer p-0" title={m.context_enable()}>
     <input type="checkbox" class="checkbox checkbox-xs" bind:checked={contextEnabled} />
-    <span class="text-xs whitespace-nowrap opacity-70">{m.context_auto_inject()}</span>
+  </label>
+{/snippet}
+
+{#snippet appendToggle()}
+  <label
+    class="label min-h-0 cursor-pointer p-0 {contextEnabled ? '' : 'cursor-not-allowed opacity-40'}"
+    title={m.context_auto_inject_tip()}
+  >
+    <input type="checkbox" class="checkbox checkbox-xs" disabled={!contextEnabled} bind:checked={contextAppend} />
   </label>
 {/snippet}
 
@@ -299,7 +313,13 @@ ${m.prompt_variables_tip()}
           class="target-language min-w-0 grow select-sm"
         />
       </div>
-      <CodeMirror title={m.prompt()} language={markdown()} placeholder={promptPlaceholder} bind:document={promptText} />
+      <CodeMirror
+        title={m.prompt()}
+        language={markdown()}
+        placeholder={promptPlaceholder}
+        bind:document={promptText}
+        panelAction={contextToggle}
+      />
       <div class="collapse-arrow collapse overflow-hidden border">
         <input type="checkbox" class="peer" />
         <div class="collapse-title border-b-transparent transition-all duration-200 peer-checked:border-b">
@@ -313,7 +333,7 @@ ${m.prompt_variables_tip()}
             title={m.system_prompt()}
             language={markdown()}
             bind:document={systemPrompt}
-            panelAction={contextToggle}
+            panelAction={appendToggle}
           />
           <!-- max tokens -->
           <Label tip={m.max_tokens_tip()}>{m.max_tokens()}</Label>

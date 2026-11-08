@@ -367,7 +367,7 @@ const promptExecutor: Executor = async (rule, entry, placement, isCurrent = () =
   }
 
   console.debug(`Generating prompt: ${promptId}`);
-  if (smartContext.current) {
+  if (smartContext.current && prompt.context) {
     entry.context = await captureContext();
   } else {
     entry.context = undefined;
@@ -394,9 +394,9 @@ const promptExecutor: Executor = async (rule, entry, placement, isCurrent = () =
   entry.actionLabel = promptId;
   entry.provider = prompt.provider;
   entry.model = prompt.model;
-  // the context block is added per conversation: not every AI action wants the surrounding text
-  // appended to its system prompt, and the template can already use the context variables
-  entry.injectContext = Boolean(prompt.context);
+  // the context block is added per conversation: enabling context makes the variables available,
+  // and the system prompt checkbox decides whether the block is appended as well
+  entry.injectContext = Boolean(prompt.context && prompt.appendContext);
   entry.maxTokens = prompt.maxTokens;
   entry.temperature = prompt.temperature;
   entry.topP = prompt.topP;
