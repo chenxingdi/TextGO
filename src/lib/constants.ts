@@ -148,27 +148,6 @@ export const CONTEXT_TEXT_LIMIT = {
 };
 
 /**
- * Pixels captured around the selection when the vision capture area follows the selection.
- *
- * The horizontal and vertical ranges follow the largest supported screenshot, so one side can
- * cover the whole width while the other stays at the line height.
- */
-export const VISION_MARGIN = {
-  horizontal: {
-    min: 0,
-    default: 4,
-    max: 1920,
-    step: 4
-  },
-  vertical: {
-    min: 0,
-    default: 8,
-    max: 1080,
-    step: 4
-  }
-};
-
-/**
  * Popup window default size.
  */
 export const DEFAULT_POPUP_WINDOW_SIZE = {

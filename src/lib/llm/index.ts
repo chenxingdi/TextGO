@@ -1,16 +1,7 @@
 import type { LLMProvider } from '$lib/types';
 import type { LLMClient } from './base';
 
-import {
-  anthropicApiKey,
-  geminiApiKey,
-  lmstudioHost,
-  ollamaHost,
-  openaiApiKey,
-  openrouterApiKey,
-  providers,
-  xaiApiKey
-} from '$lib/stores.svelte';
+import { providers } from '$lib/stores.svelte';
 import { AnthropicClient } from './anthropic';
 import { OpenAICompatibleClient } from './base';
 import { GeminiClient } from './google';
@@ -26,52 +17,6 @@ import { XAIClient } from './xai';
 class CustomLLMClient extends OpenAICompatibleClient {
   constructor(baseUrl: string, apiKey: string) {
     super(baseUrl, apiKey);
-  }
-}
-
-/** Endpoint and credential used to reach a provider. */
-export type ProviderConnection = {
-  /** OpenAI compatible base URL, without a trailing slash. */
-  baseUrl: string;
-  /** Bearer token or provider specific API key. */
-  apiKey: string;
-};
-
-/**
- * Resolve the endpoint and credential of a provider.
- *
- * Model listing needs the same connection as the chat client, but without constructing a client
- * that requires a configured key.
- *
- * @param provider - LLM provider type or custom provider name
- * @returns connection details, or `null` when the provider is unknown
- */
-export function providerConnection(provider: LLMProvider | string): ProviderConnection | null {
-  switch (provider) {
-    case 'ollama':
-      return { baseUrl: `${ollamaHost.current || 'http://127.0.0.1:11434'}/v1`, apiKey: 'ollama' };
-    case 'lmstudio':
-      return { baseUrl: `${lmstudioHost.current || 'http://127.0.0.1:1234'}/v1`, apiKey: 'lm-studio' };
-    case 'openrouter':
-      return openrouterApiKey.current
-        ? { baseUrl: 'https://openrouter.ai/api/v1', apiKey: openrouterApiKey.current }
-        : null;
-    case 'openai':
-      return openaiApiKey.current ? { baseUrl: 'https://api.openai.com/v1', apiKey: openaiApiKey.current } : null;
-    case 'anthropic':
-      return anthropicApiKey.current
-        ? { baseUrl: 'https://api.anthropic.com/v1', apiKey: anthropicApiKey.current }
-        : null;
-    case 'google':
-      return geminiApiKey.current
-        ? { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', apiKey: geminiApiKey.current }
-        : null;
-    case 'xai':
-      return xaiApiKey.current ? { baseUrl: 'https://api.x.ai/v1', apiKey: xaiApiKey.current } : null;
-    default: {
-      const custom = providers.current.find((p) => p.name === provider);
-      return custom ? { baseUrl: custom.baseUrl, apiKey: custom.apiKey } : null;
-    }
   }
 }
 

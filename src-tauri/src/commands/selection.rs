@@ -4,14 +4,10 @@ use crate::commands::clipboard::clear_clipboard;
 use crate::commands::clipboard::{clipboard_sequence, CLIPBOARD_CONSUMED_SEQUENCE};
 use crate::commands::clipboard::{get_clipboard_text, with_clipboard_backup};
 use crate::commands::keyboard::{configured_copy_insert, send_copy_keys_with};
-use crate::capture::{self, CaptureSettings};
 use crate::commands::shortcut::ShortcutHandlerGuard;
 use crate::error::AppError;
 use crate::platform::{self, SelectionContext};
-use crate::{
-    CONTEXT_LIMIT, FORCE_GET_SELECTION, SELECTION_CONTEXT_CACHE, SELECTION_TEXT_CACHE,
-    VISION_CAPTURE,
-};
+use crate::{CONTEXT_LIMIT, FORCE_GET_SELECTION, SELECTION_CONTEXT_CACHE, SELECTION_TEXT_CACHE};
 use log::{debug, warn};
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::time::Duration;
@@ -113,67 +109,6 @@ fn capture_context(selection: &str) {
         }
         Err(error) => debug!("Failed to capture selection context: {}", error),
     }
-}
-
-/// Capture the current selection area for the vision picking fallback.
-///
-/// The frontend calls this only when an AI action needs context and the platform exposed none, so
-/// the source application still owns focus here. Failures are reported as "no image": the action
-/// then simply runs without context.
-///
-/// @returns base64 encoded PNG, or `None` when the feature is off or the capture failed
-#[tauri::command]
-pub async fn capture_selection_image() -> Result<Option<String>, AppError> {
-    let settings = VISION_CAPTURE.lock().ok().and_then(|slot| *slot);
-    let Some(settings) = settings.filter(|settings| settings.enabled) else {
-        return Ok(None);
-    };
-    // a password field would only produce masked characters, so it is never captured
-    if platform::is_focus_password() {
-        debug!("Skipped the screenshot because the focused control is a password field");
-        return Ok(None);
-    }
-
-    match capture::capture(&settings) {
-        Ok(image) => Ok(Some(image)),
-        Err(error) => {
-            debug!("Failed to capture the selection image: {}", error);
-            Ok(None)
-        }
-    }
-}
-
-/// Set the screenshot area used by the vision picking fallback.
-///
-/// @param enabled - whether a screenshot may be taken for context
-/// @param full_screen - whether to capture the whole virtual screen
-/// @param top - pixels captured above the selection
-/// @param bottom - pixels captured below the selection
-/// @param left - pixels captured to the left of the selection
-/// @param right - pixels captured to the right of the selection
-#[tauri::command]
-pub fn set_vision_capture(
-    enabled: bool,
-    full_screen: bool,
-    top: u32,
-    bottom: u32,
-    left: u32,
-    right: u32,
-) -> Result<(), AppError> {
-    if let Ok(mut slot) = VISION_CAPTURE.lock() {
-        *slot = Some(CaptureSettings {
-            enabled,
-            full_screen,
-            margins: capture::CaptureMargins {
-                // the settings page already clamps these, the backend only guards the buffer size
-                top: top.min(1080),
-                bottom: bottom.min(1080),
-                left: left.min(1920),
-                right: right.min(1920),
-            },
-        });
-    }
-    Ok(())
 }
 
 /// Get the context captured together with the current selection.

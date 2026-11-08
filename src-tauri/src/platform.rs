@@ -5,17 +5,16 @@ mod windows;
 
 #[cfg(target_os = "macos")]
 pub use macos::{
-    activate_focus_target, get_app_id, get_cursor_location, get_cursor_position, get_focus_target,
-    get_frontmost_app_id, get_frontmost_url, get_selection, get_selection_context,
-    get_selection_rect, is_cursor_editable, is_focus_password, is_focus_target_active,
-    is_ibeam_cursor, select_backward_chars, FocusTarget,
+    activate_focus_target, get_app_id, get_cursor_location, get_focus_target, get_frontmost_app_id,
+    get_frontmost_url, get_selection, get_selection_context, is_cursor_editable,
+    is_focus_target_active, is_ibeam_cursor, select_backward_chars, FocusTarget,
 };
 #[cfg(target_os = "windows")]
 pub use windows::{
-    activate_focus_target, get_app_id, get_cursor_location, get_cursor_position, get_focus_target,
-    get_frontmost_app_id, get_frontmost_url, get_selection, get_selection_context,
-    get_selection_rect, get_text_scale_factor, is_cursor_editable, is_focus_password,
-    is_focus_target_active, is_ibeam_cursor, select_backward_chars, FocusTarget,
+    activate_focus_target, get_app_id, get_cursor_location, get_focus_target, get_frontmost_app_id,
+    get_frontmost_url, get_selection, get_selection_context, get_text_scale_factor,
+    is_cursor_editable, is_focus_target_active, is_ibeam_cursor, select_backward_chars,
+    FocusTarget,
 };
 
 /// Smallest selectable surrounding text limit.
@@ -26,19 +25,6 @@ pub const CONTEXT_TEXT_LIMIT_DEFAULT: usize = 200;
 
 /// Largest selectable surrounding text limit.
 pub const CONTEXT_TEXT_LIMIT_MAX: usize = 200;
-
-/// Rectangle covered by the current selection in physical screen pixels.
-#[derive(Clone, Copy, Debug)]
-pub struct SelectionRect {
-    /// Left edge in screen coordinates.
-    pub left: i32,
-    /// Top edge in screen coordinates.
-    pub top: i32,
-    /// Rectangle width.
-    pub width: i32,
-    /// Rectangle height.
-    pub height: i32,
-}
 
 /// Number of characters read on each side of the selection before clipping.
 ///

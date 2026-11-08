@@ -1,5 +1,5 @@
 import { PROMPT_MARK, SCRIPT_MARK, SEARCHER_MARK } from '$lib/constants';
-import { appName, contextParagraph } from '$lib/context';
+import { appName } from '$lib/context';
 import { isMouseShortcut } from '$lib/helpers';
 import { guessNaturalLanguage, NATURAL_CASES } from '$lib/matcher';
 import { m } from '$lib/paraglide/messages';
@@ -369,15 +369,6 @@ const promptExecutor: Executor = async (rule, entry, placement, isCurrent = () =
   console.debug(`Generating prompt: ${promptId}`);
   if (smartContext.current) {
     entry.context = await captureContext();
-    // the action opts in to context: when the application exposed no surrounding text, read the
-    // selection area from a screenshot instead. Actions without the opt-in never take one.
-    if (prompt.context && !contextParagraph(entry.context)) {
-      const { transcribeContext } = await import('$lib/vision');
-      const text = await transcribeContext();
-      if (text) {
-        entry.context = { ...(entry.context ?? {}), paragraph: text };
-      }
-    }
   } else {
     entry.context = undefined;
   }
