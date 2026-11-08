@@ -845,7 +845,7 @@ fn find_ignore_case(haystack: &str, needle: &str) -> Option<usize> {
 /// @returns file name without directory
 fn file_name(value: &str) -> String {
     value
-        .rsplit(|character| character == '\\' || character == '/')
+        .rsplit(['\\', '/'])
         .next()
         .unwrap_or(value)
         .trim()
