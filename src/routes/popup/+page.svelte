@@ -224,6 +224,7 @@
   import Select from '$lib/components/Select.svelte';
   import { composeContextBlock, contextParagraph as contextParagraphOf } from '$lib/context';
   import { renderTranslationPrompt } from '$lib/executor';
+  import { copyToClipboard } from '$lib/helpers';
   import { NATURAL_CASES } from '$lib/matcher';
   import { m } from '$lib/paraglide/messages';
   import {
@@ -637,12 +638,8 @@
    *
    * @param text - raw Markdown response content
    */
-  async function copyResponse(text: string) {
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch (error) {
-      console.error(`Failed to copy AI response: ${error}`);
-    }
+  function copyResponse(text: string) {
+    void copyToClipboard(text);
   }
 
   /**

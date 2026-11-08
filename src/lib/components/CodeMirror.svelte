@@ -206,6 +206,7 @@
 <script lang="ts">
   import Button from '$lib/components/Button.svelte';
   import Modal from '$lib/components/Modal.svelte';
+  import { copyToClipboard } from '$lib/helpers';
   import { theme } from '$lib/stores.svelte';
   import { resolveTheme } from '$lib/theme';
   import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete';
@@ -315,7 +316,7 @@
    * Copy document content to clipboard.
    */
   export function copy() {
-    document && navigator.clipboard && navigator.clipboard.writeText(document);
+    void copyToClipboard(document ?? '');
   }
 
   /**
