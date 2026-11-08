@@ -125,6 +125,26 @@ pub fn fresh_change(now: Instant, max_age: Duration) -> Option<Change> {
     (age <= max_age).then_some(last)
 }
 
+/// Record the clipboard as if the user had copied it themselves.
+///
+/// The copy action of this application writes the text through our own clipboard handle, so the
+/// monitor skips that change as one of our own writes. The text is still what the user just put on
+/// the clipboard on purpose, which is exactly what the surrounding-text channel looks for, so the
+/// change is dated here explicitly. Without this a copy made with our own toolbar would never be
+/// usable as context.
+pub fn note_user_copy() {
+    let Some(sequence) = platform::clipboard_change_count() else {
+        return;
+    };
+
+    if let Ok(mut last) = LAST_CHANGE.lock() {
+        *last = Some(Change {
+            sequence,
+            observed_at: Instant::now(),
+        });
+    }
+}
+
 /// Forget the last change, used when the feature is turned off.
 pub fn clear() {
     if let Ok(mut last) = LAST_CHANGE.lock() {
@@ -214,6 +234,17 @@ mod tests {
         assert!(!should_observe(99), "a capture advances the counter itself");
         drop(guard);
         assert!(should_observe(99), "observation resumes after the capture");
+    }
+
+    #[test]
+    fn a_copy_we_performed_on_request_is_dated_immediately() {
+        clear();
+        note_user_copy();
+        // platforms without a change counter cannot date the copy; every other platform must
+        if crate::platform::clipboard_change_count().is_some() {
+            assert!(fresh_change(Instant::now(), Duration::from_secs(1)).is_some());
+        }
+        clear();
     }
 
     #[test]

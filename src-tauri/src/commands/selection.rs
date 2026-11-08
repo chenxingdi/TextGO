@@ -166,7 +166,17 @@ fn capture_context(
                             change.sequence
                         );
                         context.paragraph = paragraph;
+                    } else {
+                        debug!(
+                            "Clipboard copy #{} does not carry the selection, not used as context",
+                            change.sequence
+                        );
                     }
+                } else {
+                    debug!(
+                        "Clipboard copy #{} carries no text, not used as context",
+                        change.sequence
+                    );
                 }
             }
             None => debug!(

@@ -244,6 +244,7 @@ pub fn run() {
             set_context_clipboard,
             set_context_clipboard_max_age,
             get_clipboard_text,
+            copy_text,
             set_clipboard_text,
             clear_clipboard,
             execute_python,

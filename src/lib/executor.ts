@@ -109,7 +109,9 @@ export const DEFAULT_ACTIONS: Processor[] = [
     icon: CopyIcon,
     process: (text: string) => {
       if (text) {
-        invoke('set_clipboard_text', { text });
+        // the backend records this write as a user copy, so a selection made shortly afterwards
+        // can use the copied text as surrounding context
+        invoke('copy_text', { text });
       }
       return '';
     },

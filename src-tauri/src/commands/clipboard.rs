@@ -48,6 +48,21 @@ pub fn set_clipboard_text(text: String) -> Result<(), AppError> {
     })
 }
 
+/// Write text the user asked us to copy.
+///
+/// The write itself is still marked as ours, so a later restore cannot be mistaken for a copy of
+/// the user's; it is then dated as a user copy so that a selection made shortly afterwards can use
+/// the text as surrounding context. The plain copy action must use this command, otherwise copying
+/// a paragraph with our own toolbar never becomes usable as context.
+///
+/// @param text - text the user asked to copy
+#[tauri::command]
+pub fn copy_text(text: String) -> Result<(), AppError> {
+    set_clipboard_text(text)?;
+    clipboard_watch::note_user_copy();
+    Ok(())
+}
+
 /// Clear clipboard contents.
 #[tauri::command]
 pub fn clear_clipboard() -> Result<(), AppError> {
