@@ -217,6 +217,15 @@ impl Drop for OwnWrite {
 mod tests {
     use super::*;
 
+    /// The monitor state is process wide, so tests that read or write it must not interleave: a
+    /// `clear` in one test would otherwise erase the copy another test just recorded.
+    static STATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Serialize a test that touches the monitor state.
+    fn lock_state() -> std::sync::MutexGuard<'static, ()> {
+        STATE.lock().unwrap_or_else(|error| error.into_inner())
+    }
+
     fn record_at(now: Instant, sequence: u64) {
         let mut last = LAST_CHANGE.lock().expect("lock");
         *last = Some(Change {
@@ -227,6 +236,7 @@ mod tests {
 
     #[test]
     fn fresh_change_honours_the_window() {
+        let _state = lock_state();
         let copied_at = Instant::now();
         record_at(copied_at, 7);
 
@@ -240,12 +250,14 @@ mod tests {
 
     #[test]
     fn fresh_change_is_none_without_an_observed_copy() {
+        let _state = lock_state();
         clear();
         assert!(fresh_change(Instant::now(), Duration::from_secs(30)).is_none());
     }
 
     #[test]
     fn clear_forgets_the_observed_copy() {
+        let _state = lock_state();
         record_at(Instant::now(), 3);
         clear();
         assert!(fresh_change(Instant::now(), Duration::from_secs(30)).is_none());
@@ -253,6 +265,7 @@ mod tests {
 
     #[test]
     fn our_own_writes_are_not_observed() {
+        let _state = lock_state();
         OWN_SEQUENCE.store(42, Ordering::Relaxed);
         WRITING.store(false, Ordering::Relaxed);
         assert!(!should_observe(42), "our own counter value must be skipped");
@@ -268,6 +281,7 @@ mod tests {
 
     #[test]
     fn observation_is_suspended_during_a_capture() {
+        let _state = lock_state();
         OWN_SEQUENCE.store(0, Ordering::Relaxed);
         WRITING.store(false, Ordering::Relaxed);
         let guard = suspend_observation();
@@ -278,6 +292,7 @@ mod tests {
 
     #[test]
     fn a_copy_we_performed_on_request_is_dated_immediately() {
+        let _state = lock_state();
         clear();
         note_user_copy();
         // platforms without a change counter cannot date the copy; every other platform must
@@ -289,6 +304,7 @@ mod tests {
 
     #[test]
     fn a_recorded_copy_only_holds_while_the_content_is_unchanged() {
+        let _state = lock_state();
         clear();
         note_user_copy();
         let Some(change) = fresh_change(Instant::now(), Duration::from_secs(1)) else {
@@ -315,6 +331,7 @@ mod tests {
 
     #[test]
     fn keeping_a_copy_current_without_one_records_nothing() {
+        let _state = lock_state();
         clear();
         keep_copy_current();
         assert!(fresh_change(Instant::now(), Duration::from_secs(1)).is_none());
@@ -323,6 +340,7 @@ mod tests {
 
     #[test]
     fn a_newer_change_replaces_the_previous_one() {
+        let _state = lock_state();
         let first = Instant::now();
         record_at(first, 1);
         record_at(first + Duration::from_secs(1), 2);
