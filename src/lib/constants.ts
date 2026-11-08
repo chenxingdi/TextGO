@@ -141,10 +141,31 @@ export const POPUP_FONT_SIZE = {
  * Maximum characters captured from the text around the selection.
  */
 export const CONTEXT_TEXT_LIMIT = {
-  min: 200,
-  default: 1500,
-  max: 4000,
-  step: 100
+  min: 20,
+  default: 200,
+  max: 200,
+  step: 10
+};
+
+/**
+ * Pixels captured around the selection when the vision capture area follows the selection.
+ *
+ * The horizontal and vertical ranges follow the largest supported screenshot, so one side can
+ * cover the whole width while the other stays at the line height.
+ */
+export const VISION_MARGIN = {
+  horizontal: {
+    min: 0,
+    default: 4,
+    max: 1920,
+    step: 4
+  },
+  vertical: {
+    min: 0,
+    default: 8,
+    max: 1080,
+    step: 4
+  }
 };
 
 /**

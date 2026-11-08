@@ -72,6 +72,7 @@ ${m.prompt_variables_tip()}
   let promptIcon: string = $state(DEFAULT_ICON);
   let promptText: string = $state('');
   let systemPrompt: string = $state('');
+  let contextEnabled: boolean = $state(false);
   let modelProvider: string = $state(DEFAULT_PROVIDER);
   let modelName: string = $state(DEFAULT_MODEL);
   let translationMode: boolean = $state(false);
@@ -90,6 +91,7 @@ ${m.prompt_variables_tip()}
     promptIcon = prompt.icon || DEFAULT_ICON;
     promptText = prompt.prompt;
     systemPrompt = prompt.systemPrompt || '';
+    contextEnabled = Boolean(prompt.context);
     modelProvider = prompt.provider;
     modelName = prompt.model;
     translationMode = Boolean(prompt.targetLanguage);
@@ -183,6 +185,7 @@ ${m.prompt_variables_tip()}
       prompt.icon = promptIcon;
       prompt.prompt = promptText;
       prompt.systemPrompt = systemPrompt;
+      prompt.context = contextEnabled;
       prompt.provider = modelProvider;
       prompt.model = modelName;
       prompt.targetLanguage = translationMode ? targetLanguage || undefined : undefined;
@@ -198,6 +201,7 @@ ${m.prompt_variables_tip()}
         icon: promptIcon,
         prompt: promptText,
         systemPrompt: systemPrompt,
+        context: contextEnabled,
         provider: modelProvider,
         model: modelName,
         targetLanguage: translationMode ? targetLanguage || undefined : undefined,
@@ -211,6 +215,7 @@ ${m.prompt_variables_tip()}
       promptIcon = DEFAULT_ICON;
       promptText = '';
       systemPrompt = '';
+      contextEnabled = false;
       modelProvider = DEFAULT_PROVIDER;
       modelName = DEFAULT_MODEL;
       translationMode = false;
@@ -225,6 +230,13 @@ ${m.prompt_variables_tip()}
     loading.end();
   }
 </script>
+
+{#snippet contextToggle()}
+  <label class="label min-h-0 cursor-pointer gap-1.5 py-0" title={m.context_auto_inject_tip()}>
+    <input type="checkbox" class="checkbox checkbox-xs" bind:checked={contextEnabled} />
+    <span class="text-xs whitespace-nowrap opacity-70">{m.context_auto_inject()}</span>
+  </label>
+{/snippet}
 
 <Modal title="{promptId ? m.update() : m.add()}{m.prompt_template()}" bind:this={modal}>
   <form
@@ -297,7 +309,12 @@ ${m.prompt_variables_tip()}
         <div class="collapse-content flex flex-col gap-1.5">
           <!-- system prompt -->
           <Label>{m.system_prompt()}</Label>
-          <CodeMirror title={m.system_prompt()} language={markdown()} bind:document={systemPrompt} />
+          <CodeMirror
+            title={m.system_prompt()}
+            language={markdown()}
+            bind:document={systemPrompt}
+            panelAction={contextToggle}
+          />
           <!-- max tokens -->
           <Label tip={m.max_tokens_tip()}>{m.max_tokens()}</Label>
           <input class="input w-full input-sm" placeholder="0" {...schema.maxTokens} bind:value={maxTokens} />

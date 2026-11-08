@@ -63,12 +63,15 @@ tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", rev = "da9c9a
 plist = "1.10.3"
 
 [target.'cfg(target_os = "windows")'.dependencies]
+# screenshot capture for vision picking
+image = { version = "0.25", default-features = false, features = ["png"] }
 # readers that draw their pages themselves expose no accessibility text, so the surrounding text
 # has to be read back from the document they have open
 pdf-extract = "0.12.1"
 lopdf = "0.42"
 zip = { version = "2.6", default-features = false, features = ["deflate"] }
 windows = { version = "0.62.2", features = [
+  "Win32_Graphics_Gdi",
   "Win32_System_Com",
   "Win32_System_DataExchange",
   "Win32_System_Ole",

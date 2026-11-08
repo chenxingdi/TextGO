@@ -1,3 +1,4 @@
+mod capture;
 mod commands;
 #[cfg(target_os = "windows")]
 mod document;
@@ -83,6 +84,11 @@ pub static SELECTION_TEXT_CACHE: LazyLock<Mutex<Option<(String, Instant)>>> =
 
 // context captured while the source application still owned focus; replaced on every new selection
 pub static SELECTION_CONTEXT_CACHE: LazyLock<Mutex<Option<platform::SelectionContext>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+// screenshot settings synced from the settings page; `enabled` is false unless the feature is on
+// and both the provider and the model are configured
+pub static VISION_CAPTURE: LazyLock<Mutex<Option<capture::CaptureSettings>>> =
     LazyLock::new(|| Mutex::new(None));
 
 // global force get selection state (clipboard fallback)
@@ -222,7 +228,9 @@ pub fn run() {
             set_copy_key,
             get_selection,
             get_selection_context,
+            capture_selection_image,
             set_context_limit,
+            set_vision_capture,
             get_clipboard_text,
             set_clipboard_text,
             clear_clipboard,
@@ -279,6 +287,44 @@ fn setup_app(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
             0
         };
         CONTEXT_LIMIT.store(limit, Ordering::Relaxed);
+
+        // the capture area is fixed in the backend so a screenshot can be taken while the source
+        // application still owns focus, before the popup opens
+        let configured = |key: &str| {
+            store
+                .get(key)
+                .and_then(|value| value.as_str().map(|value| !value.is_empty()))
+                .unwrap_or(false)
+        };
+        let vision_enabled = store
+            .get("visionPicking")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+            && configured("visionProvider")
+            && configured("visionModel");
+        let full_screen = store
+            .get("visionRegion")
+            .and_then(|value| value.as_str().map(|value| value == "screen"))
+            .unwrap_or(false);
+        let margin = |key: &str, fallback: u32, max: u32| {
+            store
+                .get(key)
+                .and_then(|value| value.as_u64())
+                .map(|value| (value as u32).min(max))
+                .unwrap_or(fallback)
+        };
+        if let Ok(mut slot) = VISION_CAPTURE.lock() {
+            *slot = Some(capture::CaptureSettings {
+                enabled: vision_enabled,
+                full_screen,
+                margins: capture::CaptureMargins {
+                    top: margin("visionMarginTop", 8, 1080),
+                    bottom: margin("visionMarginBottom", 8, 1080),
+                    left: margin("visionMarginLeft", 4, 1920),
+                    right: margin("visionMarginRight", 4, 1920),
+                },
+            });
+        }
     }
 
     // start mouse event listener

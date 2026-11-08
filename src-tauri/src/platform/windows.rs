@@ -2,7 +2,7 @@ use crate::document;
 use crate::error::AppError;
 use crate::platform::{
     clip_around_selection, context_paragraph_cap, context_window_radius, is_browser, paragraph_around,
-    SelectionContext,
+    SelectionContext, SelectionRect,
 };
 use log::info;
 use std::fs;
@@ -49,6 +49,9 @@ const MIN_VALID_WIDTH: f64 = 1.0;
 const MAX_VALID_HEIGHT: f64 = 100.0;
 const MAX_VALID_COORDINATE: f64 = 10000.0;
 
+// a selection rectangle taller than this covers a whole page rather than text lines
+const MAX_SELECTION_RECT_HEIGHT: f64 = 1080.0;
+
 // editable legacy control roles
 const ROLE_SYSTEM_TEXT: u32 = 42;
 const ROLE_SYSTEM_COMBOBOX: u32 = 46;
@@ -83,6 +86,8 @@ unsafe extern "system" {
         n_dim: u32,
         pl_ubound: *mut i32,
     ) -> i32;
+
+    unsafe fn SafeArrayDestroy(psa: *mut std::ffi::c_void) -> i32;
 }
 
 /// COM resource guard.
@@ -201,6 +206,99 @@ pub fn get_selection() -> Result<String, AppError> {
             .map_err(|_| "Failed to get text from selection")?;
 
         Ok(text.to_string())
+    }
+}
+
+/// Get the rectangle covered by the current selection in physical screen pixels.
+///
+/// Multi-line selections report one rectangle per line; the union of the valid rectangles is
+/// returned so the capture area covers the whole selection. Images and rendered pages expose no
+/// text range, in which case the caller falls back to a band around the cursor.
+///
+/// @returns union of the selection rectangles, or `None` when no rectangle could be read
+pub fn get_selection_rect() -> Option<SelectionRect> {
+    unsafe {
+        let _com = ComGuard::new().ok()?;
+        let focused_element = get_focused_element().ok()?;
+        let text_range = get_selected_range(&focused_element).ok()?;
+        let rect_array = text_range.GetBoundingRectangles().ok()?;
+        if rect_array.is_null() {
+            return None;
+        }
+
+        let mut rect_ptr: *mut f64 = std::ptr::null_mut();
+        if SafeArrayAccessData(rect_array as *mut _, &mut rect_ptr as *mut _ as *mut _) != 0 {
+            SafeArrayDestroy(rect_array as *mut _);
+            return None;
+        }
+
+        let mut lower_bound: i32 = 0;
+        let mut upper_bound: i32 = 0;
+        let bounds_ok = SafeArrayGetLBound(rect_array as *mut _, 1, &mut lower_bound) == 0
+            && SafeArrayGetUBound(rect_array as *mut _, 1, &mut upper_bound) == 0;
+        if !bounds_ok {
+            SafeArrayUnaccessData(rect_array as *mut _);
+            SafeArrayDestroy(rect_array as *mut _);
+            return None;
+        }
+
+        let rect_count = ((upper_bound - lower_bound + 1) / 4).max(0) as usize;
+        let mut left = f64::MAX;
+        let mut top = f64::MAX;
+        let mut right = f64::MIN;
+        let mut bottom = f64::MIN;
+        for index in 0..rect_count {
+            let rect_index = index * 4;
+            let rect_left = *rect_ptr.add(rect_index);
+            let rect_top = *rect_ptr.add(rect_index + 1);
+            let width = *rect_ptr.add(rect_index + 2);
+            let height = *rect_ptr.add(rect_index + 3);
+            // line breaks show up as empty rectangles; only real text boxes widen the area
+            if !rect_left.is_finite()
+                || !rect_top.is_finite()
+                || width <= 0.0
+                || height <= 0.0
+                || width > MAX_VALID_COORDINATE
+                || height > MAX_SELECTION_RECT_HEIGHT
+            {
+                continue;
+            }
+            left = left.min(rect_left);
+            top = top.min(rect_top);
+            right = right.max(rect_left + width);
+            bottom = bottom.max(rect_top + height);
+        }
+
+        SafeArrayUnaccessData(rect_array as *mut _);
+        SafeArrayDestroy(rect_array as *mut _);
+
+        (right > left && bottom > top).then_some(SelectionRect {
+            left: left.round() as i32,
+            top: top.round() as i32,
+            width: (right - left).round() as i32,
+            height: (bottom - top).round() as i32,
+        })
+    }
+}
+
+/// Check whether the focused control is a password field.
+///
+/// Screenshots of a password box would leak the masked characters and never produce readable
+/// text anyway, so the capture is skipped entirely.
+///
+/// @returns whether the focused control reports itself as a password field
+pub fn is_focus_password() -> bool {
+    unsafe {
+        let Ok(_com) = ComGuard::new() else {
+            return false;
+        };
+        match get_focused_element() {
+            Ok(element) => element
+                .CurrentIsPassword()
+                .map(|value| value.as_bool())
+                .unwrap_or(false),
+            Err(_) => false,
+        }
     }
 }
 
@@ -627,6 +725,23 @@ pub fn is_cursor_editable() -> Result<bool, AppError> {
         }
 
         Ok(false)
+    }
+}
+
+/// Get the current cursor position in physical screen pixels.
+///
+/// @returns cursor position, or `None` when the cursor is hidden or cannot be read
+pub fn get_cursor_position() -> Option<(i32, i32)> {
+    unsafe {
+        let mut cursor_info = CURSORINFO {
+            cbSize: std::mem::size_of::<CURSORINFO>() as u32,
+            flags: Default::default(),
+            hCursor: Default::default(),
+            ptScreenPos: Default::default(),
+        };
+        GetCursorInfo(&mut cursor_info)
+            .ok()
+            .map(|_| (cursor_info.ptScreenPos.x, cursor_info.ptScreenPos.y))
     }
 }
 

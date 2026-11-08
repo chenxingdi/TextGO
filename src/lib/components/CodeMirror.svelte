@@ -3,6 +3,7 @@
   import type { Language, LanguageSupport } from '@codemirror/language';
   import type { Extension } from '@codemirror/state';
   import type { Options } from 'prettier';
+  import type { Snippet } from 'svelte';
 
   type FormatOptionLoader = () => Promise<Options>;
 
@@ -51,6 +52,8 @@
     resetter: boolean;
     /** Whether to show format button in panel. */
     formatter: boolean;
+    /** Extra controls rendered before the reset button in the panel. */
+    panelAction: Snippet;
     /** Callback function when document changes. */
     onchange: (doc: string) => void;
   }>;
@@ -266,6 +269,7 @@
     copier = true,
     resetter = true,
     formatter = true,
+    panelAction,
     onchange
   }: CodeMirrorProps = $props();
   let enlarger = $derived(_enlarger ?? !readOnly);
@@ -513,6 +517,9 @@
       <span class="text-xs font-semibold opacity-70">{languageName}</span>
     </span>
     <span class="flex items-center gap-2">
+      {#if panelAction}
+        {@render panelAction()}
+      {/if}
       {#if !readOnly && resetter}
         <Button
           icon={ArrowCounterClockwiseIcon}
@@ -551,6 +558,7 @@
       {copier}
       {resetter}
       {formatter}
+      {panelAction}
       onchange={() => replaceDocument(editorView, document)}
     />
   </Modal>

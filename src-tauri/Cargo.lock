@@ -11,6 +11,7 @@ dependencies = [
  "core-foundation 0.10.1",
  "enigo",
  "fern",
+ "image",
  "lingua",
  "log",
  "plist",

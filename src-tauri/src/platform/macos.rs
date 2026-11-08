@@ -1,5 +1,7 @@
 use crate::error::AppError;
-use crate::platform::{context_window_radius, is_browser, paragraph_around, SelectionContext};
+use crate::platform::{
+    context_window_radius, is_browser, paragraph_around, SelectionContext, SelectionRect,
+};
 use core_foundation::array::CFArray;
 use core_foundation::base::{CFRange, CFType, CFTypeRef, TCFType};
 use core_foundation::string::{CFString, CFStringRef};
@@ -867,4 +869,28 @@ fn find_url_in_element(element: &CFType, depth: usize, max_depth: usize) -> Opti
 
         None
     }
+}
+
+/// Get the rectangle covered by the current selection in physical screen pixels.
+///
+/// The vision picking fallback currently captures a whole monitor on macOS, so no line rectangle
+/// is read from the accessibility tree.
+///
+/// @returns always `None`
+pub fn get_selection_rect() -> Option<SelectionRect> {
+    None
+}
+
+/// Check whether the focused control is a password field.
+///
+/// @returns always `false`; the macOS capture path does not read the focused control yet
+pub fn is_focus_password() -> bool {
+    false
+}
+
+/// Get the current cursor position in physical screen pixels.
+///
+/// @returns always `None`; the macOS capture path does not read the cursor position yet
+pub fn get_cursor_position() -> Option<(i32, i32)> {
+    None
 }

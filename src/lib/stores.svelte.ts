@@ -9,7 +9,8 @@ import {
   TOOLBAR_CORNER_RADIUS,
   TOOLBAR_OPACITY,
   TOOLBAR_POSITION_OFFSET,
-  TRIPLE_CLICK_SHORTCUT
+  TRIPLE_CLICK_SHORTCUT,
+  VISION_MARGIN
 } from '$lib/constants';
 import { isSystemTheme, type Theme, type ThemeSetting } from '$lib/theme';
 import type {
@@ -349,11 +350,19 @@ export const iBeamCursor = persisted<boolean>('iBeamCursor', true, {
 export const smartContext = persisted<boolean>('smartContext', false, {
   onchange: (enabled) => {
     invoke('set_context_limit', { limit: enabled ? smartContextLimit.current : 0 });
+    syncVisionCapture();
   }
 });
 
 // maximum characters captured from the text around the selection
 export const smartContextLimit = persisted<number>('smartContextLimit', CONTEXT_TEXT_LIMIT.default, {
+  onload: (limit) => {
+    // records stored with the previous range must not leave the slider showing an out of range value
+    const normalized = Math.min(CONTEXT_TEXT_LIMIT.max, Math.max(CONTEXT_TEXT_LIMIT.min, Math.trunc(limit)));
+    if (normalized !== limit) {
+      queueMicrotask(() => (smartContextLimit.current = normalized));
+    }
+  },
   onchange: (limit) => {
     if (smartContext.current) {
       invoke('set_context_limit', { limit });
@@ -361,11 +370,84 @@ export const smartContextLimit = persisted<number>('smartContextLimit', CONTEXT_
   }
 });
 
-// whether captured context is appended to the system prompt automatically
-export const smartContextAutoInject = persisted<boolean>('smartContextAutoInject', true);
-
 // whether the captured context is shown above the AI response in the popup
 export const smartContextDisplay = persisted<boolean>('smartContextDisplay', true);
+
+// whether a selection without selectable text is read out of a screenshot by a vision model
+export const visionPicking = persisted<boolean>('visionPicking', false, {
+  onchange: () => syncVisionCapture()
+});
+
+// provider used to transcribe screenshots; the choices come from the AI conversation settings
+export const visionProvider = persisted<string>('visionProvider', '', {
+  onchange: () => syncVisionCapture()
+});
+
+// model used to transcribe screenshots
+export const visionModel = persisted<string>('visionModel', '', {
+  onchange: () => syncVisionCapture()
+});
+
+// capture area used for the screenshot: the whole screen or the area around the selection
+export const visionRegion = persisted<'screen' | 'selection'>('visionRegion', 'selection', {
+  onchange: () => syncVisionCapture()
+});
+
+// pixels captured above the selection
+export const visionMarginTop = persisted<number>('visionMarginTop', VISION_MARGIN.vertical.default, {
+  onchange: () => syncVisionCapture()
+});
+
+// pixels captured below the selection
+export const visionMarginBottom = persisted<number>('visionMarginBottom', VISION_MARGIN.vertical.default, {
+  onchange: () => syncVisionCapture()
+});
+
+// pixels captured to the left of the selection
+export const visionMarginLeft = persisted<number>('visionMarginLeft', VISION_MARGIN.horizontal.default, {
+  onchange: () => syncVisionCapture()
+});
+
+// pixels captured to the right of the selection
+export const visionMarginRight = persisted<number>('visionMarginRight', VISION_MARGIN.horizontal.default, {
+  onchange: () => syncVisionCapture()
+});
+
+/**
+ * Clamp a stored margin to its allowed range.
+ *
+ * @param value - stored margin
+ * @param min - smallest allowed value
+ * @param max - largest allowed value
+ * @returns integer margin inside the allowed range
+ */
+function clampMargin(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) {
+    return min;
+  }
+  return Math.min(max, Math.max(min, Math.trunc(value)));
+}
+
+/**
+ * Send the current screenshot settings to the backend.
+ *
+ * The backend captures the screenshot while the source application still owns focus, so it needs
+ * the area configured before the request. The capture stays disabled until context enhancement is
+ * on and both the provider and the model are configured; the frontend additionally only asks for
+ * an image when an AI action opted in to context and the application exposed no surrounding text.
+ */
+function syncVisionCapture() {
+  invoke('set_vision_capture', {
+    enabled: smartContext.current && visionPicking.current && !!visionProvider.current && !!visionModel.current,
+    fullScreen: visionRegion.current === 'screen',
+    top: clampMargin(visionMarginTop.current, VISION_MARGIN.vertical.min, VISION_MARGIN.vertical.max),
+    bottom: clampMargin(visionMarginBottom.current, VISION_MARGIN.vertical.min, VISION_MARGIN.vertical.max),
+    left: clampMargin(visionMarginLeft.current, VISION_MARGIN.horizontal.min, VISION_MARGIN.horizontal.max),
+    right: clampMargin(visionMarginRight.current, VISION_MARGIN.horizontal.min, VISION_MARGIN.horizontal.max)
+  }).catch((error) => {
+    console.error(`Failed to update vision capture settings: ${error}`);
+  });
+}
 
 // shortcut trigger records
 export const entries = persisted<Entry[]>('entries', []);
