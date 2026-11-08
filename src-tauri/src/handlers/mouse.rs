@@ -1,5 +1,7 @@
-use crate::commands::clipboard::{get_clipboard_text, write_clipboard_text};
-use crate::commands::{get_shortcut_context, send_copy_keys, ShortcutHandlerGuard};
+use crate::commands::{
+    get_clipboard_text, get_shortcut_context, send_copy_keys, write_clipboard_text,
+    ShortcutHandlerGuard,
+};
 use crate::error::AppError;
 use crate::platform;
 use crate::{
