@@ -9,12 +9,6 @@
 use crate::platform::clip_at;
 use crate::text::{flat_text, locate_flat, MIN_SELECTION_CHARS};
 
-/// Extra characters a copy must carry beyond the selection to be worth using.
-const MIN_GAIN: usize = 20;
-
-/// Shortest copy that can still add context.
-const MIN_COPIED_CHARS: usize = MIN_SELECTION_CHARS + MIN_GAIN;
-
 /// Longest copy accepted; anything above this is a whole-document copy that costs more than it adds.
 const MAX_COPIED_CHARS: usize = 64_000;
 
@@ -22,6 +16,12 @@ const MAX_COPIED_CHARS: usize = 64_000;
 ///
 /// The comparison ignores whitespace, line-end hyphenation, ligatures and case, because a copy and a
 /// selection of the same words differ in exactly those ways.
+///
+/// The copy only has to carry more text than the selection, so a single character of a script where
+/// a character is a word - classical Chinese, Japanese - can be looked up too. Such a short
+/// selection says little about where it sits, so it is accepted only when the window cannot point at
+/// the wrong place: either the whole copy fits into the window, or the selection occurs in it once.
+/// A longer selection keeps the older, more permissive behaviour and may repeat.
 ///
 /// @param copied - text that was on the clipboard
 /// @param selection - selected text
@@ -34,22 +34,35 @@ pub(crate) fn paragraph_in(copied: &str, selection: &str, limit: usize) -> Optio
         return None;
     }
 
-    let selection_chars = selection.trim().chars().count();
-    if selection_chars < MIN_SELECTION_CHARS
-        || copied_chars < MIN_COPIED_CHARS
-        || copied_chars < selection_chars + MIN_GAIN
-    {
+    let selection = selection.trim();
+    let selection_chars = selection.chars().count();
+
+    // a copy of the selection itself carries nothing beyond it, and an empty selection matches
+    // everywhere
+    if copied_chars <= selection_chars {
+        return None;
+    }
+
+    // punctuation cannot be looked up on its own, and its content says nothing about meaning
+    if !selection.chars().any(char::is_alphanumeric) {
         return None;
     }
 
     let needle = flat_text(selection);
-    if needle.chars().count() < MIN_SELECTION_CHARS {
-        return None;
-    }
 
     // repeated words appear more than once in a paragraph; the window with room on both sides is
     // the one that carries context instead of a fragment clipped at the copy's edge
     let positions = locate_flat(copied, &needle);
+    if positions.is_empty() {
+        return None;
+    }
+
+    // a selection shorter than a word is only located unambiguously when the window is the whole
+    // copy or when the selection cannot be meant twice
+    if selection_chars < MIN_SELECTION_CHARS && copied_chars > limit && positions.len() > 1 {
+        return None;
+    }
+
     let best = positions.into_iter().max_by_key(|offset| {
         let before = copied
             .get(..*offset)
@@ -102,15 +115,55 @@ mod tests {
     }
 
     #[test]
-    fn a_short_selection_is_never_matched() {
-        assert!(paragraph_in(ARTICLE, "of", 80).is_none());
-        assert!(paragraph_in(ARTICLE, "液态表", 80).is_none());
+    fn a_single_character_finds_its_sentence() {
+        // a character is a whole word in classical Chinese, and a copy this short is returned as a
+        // whole, so the position cannot be meant wrong
+        let copied = "學而時習之不亦說乎有朋自遠方來不亦樂乎";
+        let context = paragraph_in(copied, "說", 200).expect("context");
+        assert!(context.contains("不亦說乎"), "{context}");
     }
 
     #[test]
-    fn a_copy_that_barely_differs_from_the_selection_is_ignored() {
-        let copied = "prefix target words here suffix";
-        assert!(paragraph_in(copied, "target words here", 200).is_none());
+    fn a_short_selection_is_matched_when_it_occurs_once() {
+        // the copy is wider than the window, but the word appears a single time inside it
+        let copied = format!(
+            "{} needle of the sentence {}",
+            "filler ".repeat(20),
+            "tail ".repeat(20)
+        );
+        assert!(paragraph_in(&copied, "of", 60).is_some());
+    }
+
+    #[test]
+    fn a_short_selection_matching_across_a_word_boundary_is_ambiguous() {
+        // whitespace is ignored, so "to float" also reads "of" and the window could point at
+        // either place; a selection this short has to be unambiguous to be used
+        assert!(paragraph_in(ARTICLE, "of", 80).is_none());
+    }
+
+    #[test]
+    fn a_repeated_short_selection_is_used_when_the_copy_fits_the_window() {
+        let copied = "abc and again abc";
+        let context = paragraph_in(copied, "abc", 60).expect("context");
+        assert_eq!(context, copied);
+    }
+
+    #[test]
+    fn a_short_selection_that_can_be_meant_twice_is_ignored() {
+        let filler = "filler ".repeat(20);
+        let copied = format!("abc {filler}abc {}", "tail ".repeat(20));
+        assert!(paragraph_in(&copied, "abc", 60).is_none());
+    }
+
+    #[test]
+    fn a_selection_without_words_is_ignored() {
+        assert!(paragraph_in("句子，裡面有標點。", "，", 60).is_none());
+    }
+
+    #[test]
+    fn a_copy_that_is_not_longer_than_the_selection_is_ignored() {
+        assert!(paragraph_in("target words here", "target words here", 200).is_none());
+        assert!(paragraph_in("target words here   ", "target words here", 200).is_none());
     }
 
     #[test]

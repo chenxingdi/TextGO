@@ -10,6 +10,9 @@
 //! clipboard context, while document extraction is Windows-only.
 
 /// Shortest selection worth searching for; below this a match says nothing about position.
+///
+/// The clipboard channel accepts shorter selections when the returned window cannot point at the
+/// wrong place, so there the value marks where a selection counts as short instead of unusable.
 pub(crate) const MIN_SELECTION_CHARS: usize = 4;
 
 /// Most occurrences reported for one needle, so a pathological clipboard cannot stall a capture.

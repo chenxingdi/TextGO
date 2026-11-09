@@ -174,7 +174,7 @@ fn capture_context(
                         context.paragraph = paragraph;
                     } else {
                         debug!(
-                            "Clipboard copy #{} does not carry the selection, not used as context",
+                            "Clipboard copy #{} cannot locate the selection, not used as context",
                             change.sequence
                         );
                     }

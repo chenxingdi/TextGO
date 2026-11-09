@@ -49,7 +49,9 @@ TextGO reads that surrounding text from the first source that answers:
 | The open document named by the window title | PDF and EPUB readers                                              |
 | A passage copied moments earlier            | Applications that expose no text at all, such as Qt based readers |
 
-The clipboard source works on a copy you made yourself: copy a passage, then select a part of it within the valid window (10, 30 or 60 seconds) and TextGO uses that copy as the surrounding text. The copy has to contain the selection and be at least 20 characters longer, so a word copied on its own never pretends to be context. Text the application produces itself, such as an answer or a translation, is never used.
+The clipboard source works on a copy you made yourself: copy a passage, then select a part of it within the valid window (10, 30 or 60 seconds) and TextGO uses that copy as the surrounding text. The copy has to contain the selection and be longer than it, so a text copied on its own never pretends to be context. A selection shorter than a word - a single character of classical Chinese, for instance - is accepted as well, but only when the copy cannot point at the wrong place: either the whole copy fits into the returned window, or the selection occurs in it once. Text the application produces itself, such as an answer or a translation, is never used.
+
+The reader control and open document sources keep a minimum of four characters, because a single character cannot be located in a page or a whole book.
 
 **Usage:**
 
