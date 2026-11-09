@@ -94,6 +94,13 @@ pub static FORCE_GET_SELECTION: AtomicBool = AtomicBool::new(true);
 // maximum characters captured from around the selection; zero disables capture
 pub static CONTEXT_LIMIT: AtomicUsize = AtomicUsize::new(0);
 
+// generation of the selection context capture that is current; newer selections supersede older
+// captures, whose results are dropped
+pub static CONTEXT_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+// generation of the selection context capture that finished last
+pub static CONTEXT_FINISHED: AtomicU64 = AtomicU64::new(0);
+
 // whether a copy made shortly before the selection may provide surrounding text
 pub static CONTEXT_CLIPBOARD: AtomicBool = AtomicBool::new(true);
 
