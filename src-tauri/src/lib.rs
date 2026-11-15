@@ -6,6 +6,7 @@ mod document;
 mod error;
 mod handlers;
 mod platform;
+mod selection_profile;
 mod text;
 
 use clipboard_rs::ClipboardContext;

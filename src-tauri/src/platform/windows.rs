@@ -4,6 +4,7 @@ use crate::platform::{
     clip_around_selection, context_paragraph_cap, context_window_radius, is_browser, paragraph_around,
     SelectionContext,
 };
+use crate::selection_profile;
 use log::info;
 use std::fs;
 use std::path::Path;
@@ -245,7 +246,7 @@ pub fn get_selection_context(limit: usize, selection: &str) -> Result<SelectionC
         // paragraph text controls they publish, or from the document they have open
         if context.paragraph.trim().is_empty() && !selection.is_empty() && !is_browser(&context.app_id)
         {
-            context.paragraph = text_node_context(selection, limit)
+            context.paragraph = text_node_context(&context.app_id, selection, limit)
                 .or_else(|| document_context(&context.title, selection, limit))
                 .unwrap_or_default();
         }
@@ -265,12 +266,21 @@ pub fn get_selection_context(limit: usize, selection: &str) -> Result<SelectionC
 /// instead of a text pattern, so the paragraph is found by its text: the control whose name carries
 /// the selection is the paragraph, and the controls around it widen the context.
 ///
+/// @param app_id - identifier of the application, used to skip a walk that never pays off
 /// @param selection - selected text, already read through the clipboard
 /// @param limit - maximum number of characters kept from the resulting text
 /// @returns text around the selection, or none when no control carries the selection
-fn text_node_context(selection: &str, limit: usize) -> Option<String> {
+fn text_node_context(app_id: &str, selection: &str, limit: usize) -> Option<String> {
     let needle = document::flat_text(selection);
     if needle.chars().count() < document::MIN_SELECTION_CHARS {
+        return None;
+    }
+
+    // Qt based readers such as GoldenDict publish no text control at all, and the walk that finds
+    // that out costs hundreds of milliseconds in their accessibility bridge - the same bridge that
+    // is fragile while the application publishes a copy. Once an application has been seen without
+    // text controls, its selections go straight to the document fallback.
+    if selection_profile::has_text_nodes(app_id) == Some(false) {
         return None;
     }
 
@@ -289,10 +299,30 @@ fn text_node_context(selection: &str, limit: usize) -> Option<String> {
         let _ = sender.send(names);
     });
 
-    let names = receiver.recv_timeout(TEXT_NODE_BUDGET).ok()?;
-    let matched = names
+    let Ok(names) = receiver.recv_timeout(TEXT_NODE_BUDGET) else {
+        // the walk did not answer in time, so nothing can be read this way
+        selection_profile::record_text_nodes(app_id, false);
+        return None;
+    };
+
+    if names.is_empty() {
+        // the tree was read and holds no text control at all: this application never publishes one,
+        // so its next selections skip the walk entirely
+        selection_profile::record_text_nodes(app_id, false);
+        return None;
+    }
+
+    let Some(matched) = names
         .iter()
-        .position(|name| document::flat_text(name).contains(&needle))?;
+        .position(|name| document::flat_text(name).contains(&needle))
+    else {
+        // a walk that answered without the selection is not proof the application has no controls:
+        // the paragraph may simply be scrolled out of the tree, so this is not remembered
+        return None;
+    };
+
+    selection_profile::record_text_nodes(app_id, true);
+
     let start = matched.saturating_sub(TEXT_NODE_NEIGHBOURS);
     let end = (matched + TEXT_NODE_NEIGHBOURS + 1).min(names.len());
     let joined = names[start..end].join("\n\n");
