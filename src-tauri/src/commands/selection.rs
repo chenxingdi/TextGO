@@ -9,6 +9,7 @@ use crate::commands::keyboard::{configured_copy_insert, send_copy_keys_with};
 use crate::commands::shortcut::ShortcutHandlerGuard;
 use crate::error::AppError;
 use crate::platform::{self, SelectionContext};
+use crate::selection_profile;
 use crate::{
     CONTEXT_CLIPBOARD, CONTEXT_CLIPBOARD_AGE_MAX, CONTEXT_CLIPBOARD_AGE_MIN,
     CONTEXT_CLIPBOARD_MAX_AGE_SECS, CONTEXT_FINISHED, CONTEXT_GENERATION, CONTEXT_LIMIT,
@@ -25,11 +26,6 @@ static MAX_WAIT_TIME: AtomicU64 = AtomicU64::new(1000);
 // how often the Windows path checks the clipboard sequence number
 #[cfg(target_os = "windows")]
 const CLIPBOARD_CHECK_INTERVAL: Duration = Duration::from_millis(10);
-
-// grace period between the sequence number change and the first read, so the source application
-// can finish publishing the remaining clipboard formats
-#[cfg(target_os = "windows")]
-const CLIPBOARD_SETTLE_TIME: Duration = Duration::from_millis(50);
 
 // how many times a published but still unreadable clipboard is retried
 #[cfg(target_os = "windows")]
@@ -92,7 +88,10 @@ pub async fn get_selection(app: AppHandle, mouse: Option<bool>) -> Result<String
                 *cache = None;
             }
 
-            return Ok(with_context(text, None, selection_at, clipboard_allowed).await);
+            // the native path needs the identifier too: it decides whether the surrounding-text
+            // capture is worth waiting for
+            let app_id = platform::get_frontmost_app_id().unwrap_or_default();
+            return Ok(with_context(text, None, selection_at, clipboard_allowed, &app_id).await);
         }
     }
 
@@ -103,8 +102,12 @@ pub async fn get_selection(app: AppHandle, mouse: Option<bool>) -> Result<String
 
     // if native API fails, fall back to clipboard method
     warn!("Failed to get selection natively, fallback to clipboard method");
-    let (text, previous_text) = get_selection_fallback(app, mouse.unwrap_or(false)).await?;
-    Ok(with_context(text, previous_text, selection_at, clipboard_allowed).await)
+
+    // the application identifier decides how long its copies have to be waited for and which
+    // surrounding-text channels are worth trying; the lookup costs well under a millisecond
+    let app_id = platform::get_frontmost_app_id().unwrap_or_default();
+    let (text, previous_text) = get_selection_fallback(app, mouse.unwrap_or(false), &app_id).await?;
+    Ok(with_context(text, previous_text, selection_at, clipboard_allowed, &app_id).await)
 }
 
 /// Start capturing the context of the current selection and wait a short budget for it.
@@ -120,16 +123,37 @@ pub async fn get_selection(app: AppHandle, mouse: Option<bool>) -> Result<String
 /// @param previous_text - text the clipboard held before the selection copy, if any
 /// @param selection_at - moment the user made the selection
 /// @param clipboard_allowed - whether the clipboard channel is enabled by the settings
+/// @param app_id - identifier of the application the selection came from
 /// @returns the same text, unchanged
 async fn with_context(
     text: String,
     previous_text: Option<String>,
     selection_at: Instant,
     clipboard_allowed: bool,
+    app_id: &str,
 ) -> String {
-    let generation = start_context_capture(&text, previous_text, selection_at, clipboard_allowed);
-    wait_for_context(generation, CONTEXT_INLINE_BUDGET).await;
+    let generation =
+        start_context_capture(&text, previous_text, selection_at, clipboard_allowed, app_id);
+    wait_for_context(generation, inline_budget(app_id)).await;
     text
+}
+
+/// How long this selection may wait for its context before the toolbar opens without it.
+///
+/// The wait only helps an application whose capture finishes almost immediately. A Qt4 reader needs
+/// hundreds of milliseconds for the same capture, so waiting for it on every selection would add
+/// the whole budget to every toolbar for a result that never arrives in time. Once a capture has
+/// overrun the budget for an application, its next selection does not wait at all: the popup still
+/// reads the finished capture through `get_selection_context`.
+///
+/// @param app_id - identifier of the application the selection came from
+/// @returns the longest time to wait for the capture
+fn inline_budget(app_id: &str) -> Duration {
+    if selection_profile::capture_is_slow(app_id) {
+        Duration::ZERO
+    } else {
+        CONTEXT_INLINE_BUDGET
+    }
 }
 
 /// Start the background capture of the surrounding context.
@@ -141,12 +165,14 @@ async fn with_context(
 /// @param previous_text - text the clipboard held before the selection copy, if any
 /// @param selection_at - moment the user made the selection
 /// @param clipboard_allowed - whether the clipboard channel is enabled by the settings
+/// @param app_id - identifier of the application, used to remember how slow its capture is
 /// @returns generation of the started capture
 fn start_context_capture(
     selection: &str,
     previous_text: Option<String>,
     selection_at: Instant,
     clipboard_allowed: bool,
+    app_id: &str,
 ) -> u64 {
     let generation = CONTEXT_GENERATION
         .fetch_add(1, Ordering::AcqRel)
@@ -162,10 +188,18 @@ fn start_context_capture(
     }
 
     let selection = selection.to_string();
+    let app_id = app_id.to_string();
     std::thread::spawn(move || {
         // records the finish even when the capture panics, so the popup stops waiting
         let _finished = ContextCompletion(generation);
+        let started_at = Instant::now();
         let context = capture_context(&selection, previous_text, selection_at, clipboard_allowed);
+        // remember whether this application can answer inside the inline budget, so its next
+        // selection does not wait for a capture that is known to overrun it
+        selection_profile::record_capture_speed(
+            &app_id,
+            started_at.elapsed() > CONTEXT_INLINE_BUDGET,
+        );
         // a newer selection, or turning the channel off, has already cleared the cache; its owner
         // writes the entry now
         if CONTEXT_GENERATION.load(Ordering::Acquire) == generation
@@ -352,19 +386,24 @@ fn preferred_copy_insert() -> bool {
 ///
 /// @param app - application handle
 /// @param mouse - whether the selection came from a mouse gesture
+/// @param app_id - identifier of the application the selection came from, used to pick the waits
 /// @returns the copied selection and the text the clipboard held before the copy
 async fn get_selection_fallback(
     app: AppHandle,
     mouse: bool,
+    app_id: &str,
 ) -> Result<(String, Option<String>), AppError> {
     if let Ok(mut cache) = SELECTION_TEXT_CACHE.lock() {
         *cache = None;
     }
 
+    let app_id = app_id.to_string();
+
     // use backup-operation-restore mode
     with_clipboard_backup(|| async move {
         let max_wait_time = Duration::from_millis(MAX_WAIT_TIME.load(Ordering::Relaxed));
-        let configured = copy_selection(&app, mouse, preferred_copy_insert(), max_wait_time).await;
+        let configured =
+            copy_selection(&app, mouse, preferred_copy_insert(), max_wait_time, &app_id).await;
 
         #[cfg(target_os = "macos")]
         let selected_text = configured;
@@ -373,7 +412,7 @@ async fn get_selection_fallback(
         let selected_text = if configured.is_empty() {
             debug!("Preferred copy shortcut produced no text, retrying with the other one");
             let other = !preferred_copy_insert();
-            let text = copy_selection(&app, mouse, other, SECOND_ATTEMPT_WAIT).await;
+            let text = copy_selection(&app, mouse, other, SECOND_ATTEMPT_WAIT, &app_id).await;
             if !text.is_empty() {
                 // starting with the combination the application ignores costs a full timeout on
                 // every selection, so the working one is remembered
@@ -418,8 +457,15 @@ async fn get_selection_fallback(
 /// @param mouse - whether the selection came from a mouse gesture
 /// @param insert - send Ctrl+Insert instead of Ctrl+C; ignored on macOS
 /// @param timeout - how long the clipboard may take to publish the copied text
+/// @param app_id - identifier of the source application, used to size the settle wait on Windows
 /// @returns copied text, or an empty string when the combination copied nothing
-async fn copy_selection(app: &AppHandle, mouse: bool, insert: bool, timeout: Duration) -> String {
+async fn copy_selection(
+    app: &AppHandle,
+    mouse: bool,
+    insert: bool,
+    timeout: Duration,
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables))] app_id: &str,
+) -> String {
     // Windows: leave the clipboard alone until the copy has landed. Qt4 based readers such as
     // GoldenDict crash when another process opens the clipboard while they publish a copy:
     // QClipboard hands the mime data to OLE, then keeps writing WebKit's pasteboard formats to
@@ -456,8 +502,11 @@ async fn copy_selection(app: &AppHandle, mouse: bool, insert: bool, timeout: Dur
             return String::new();
         }
 
-        // the sequence number moves before the owner finishes; give it the rest of the write
-        tokio::time::sleep(CLIPBOARD_SETTLE_TIME).await;
+        // the sequence number moves before the owner finishes publishing, so the read waits for the
+        // application to be done. A browser is readable almost immediately; a Qt4 reader is not, and
+        // opening its clipboard while it is still writing crashes it, so it keeps the full wait.
+        // The read below still polls, which covers a browser that needs slightly longer.
+        tokio::time::sleep(Duration::from_millis(selection_profile::settle_ms(app_id))).await;
 
         let mut selected_text = String::new();
         for _attempt in 0..CLIPBOARD_READ_ATTEMPTS {
