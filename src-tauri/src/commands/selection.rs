@@ -266,8 +266,12 @@ fn capture_context(
         }
     };
 
-    // surrounding text from the accessibility tree always wins; the clipboard is only a fallback
-    if context.paragraph.trim().is_empty() && clipboard_allowed {
+    // A fresh copy that contains the selection is the most precise surrounding text available:
+    // it is the exact text the user had on the clipboard, so it wins even when the accessibility
+    // tree already returned a paragraph. On UIA-capable applications such as Chrome this lets the
+    // clipboard channel take part instead of being skipped entirely. When there is no usable copy
+    // the paragraph from the accessibility tree is kept unchanged.
+    if clipboard_allowed {
         let max_age = Duration::from_secs(CONTEXT_CLIPBOARD_MAX_AGE_SECS.load(Ordering::Relaxed));
         match clipboard_watch::fresh_change(selection_at, max_age) {
             // the recorded moment belongs to the text it copied; anything written afterwards leaves
@@ -290,7 +294,7 @@ fn capture_context(
                             "Context recovered from clipboard change #{}",
                             change.sequence
                         );
-                        context.paragraph = paragraph;
+                        context = prefer_clipboard_paragraph(context, paragraph);
                     } else {
                         debug!(
                             "Clipboard copy #{} cannot locate the selection, not used as context",
@@ -313,6 +317,60 @@ fn capture_context(
 
     debug!("Captured selection context from {:?}", context.app_id);
     context
+}
+
+/// Put a recovered clipboard paragraph into a captured context.
+///
+/// The copy is the exact text the user had on the clipboard and contains the selection, so it is
+/// preferred over any paragraph the accessibility tree returned. Keeping this as a small function
+/// makes the precedence testable without opening the clipboard or the accessibility tree.
+///
+/// @param context - context already captured from the platform
+/// @param paragraph - surrounding text recovered from the clipboard copy
+/// @returns the context with the clipboard paragraph installed
+fn prefer_clipboard_paragraph(mut context: SelectionContext, paragraph: String) -> SelectionContext {
+    context.paragraph = paragraph;
+    context
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::*;
+
+    #[test]
+    fn a_clipboard_paragraph_overrides_the_accessibility_paragraph() {
+        let context = SelectionContext {
+            app_id: "chrome.exe".into(),
+            title: "An article - Chrome".into(),
+            url: "https://example.com/article".into(),
+            paragraph: "UIA paragraph around the selection".into(),
+        };
+
+        let merged = prefer_clipboard_paragraph(
+            context,
+            "The exact copied sentence around the selection".into(),
+        );
+
+        assert_eq!(
+            merged.paragraph,
+            "The exact copied sentence around the selection"
+        );
+        // only the surrounding text changes; the source application identity is still UIA's
+        assert_eq!(merged.app_id, "chrome.exe");
+        assert_eq!(merged.url, "https://example.com/article");
+    }
+
+    #[test]
+    fn a_usable_copy_is_found_even_when_the_platform_paragraph_exists() {
+        let copied = "A longer copied sentence that contains the selected words along with context";
+        let selection = "selected words";
+        let paragraph = clipboard_context::paragraph_in(copied, selection, 60);
+
+        assert!(
+            paragraph.as_deref().is_some_and(|text| text.contains(selection)),
+            "a copied sentence must still be usable as context when the platform has a paragraph"
+        );
+    }
 }
 
 /// Get the context captured together with the current selection.

@@ -40,16 +40,16 @@ _TextGO is a cross-platform text processing tool that recognizes text types and 
 
 An AI action can carry the text around the selection into the request, so the model interprets the selection with the paragraph, page or passage it sits in instead of guessing.
 
-TextGO reads that surrounding text from the first source that answers:
+A fresh copy that contains the selection is the preferred source, even when the accessibility text pattern (Chrome, Word, and other apps) can also report a paragraph; the other sources are used when no copy is available.
 
-| Source                                      | Covers                                                            |
-| ------------------------------------------- | ----------------------------------------------------------------- |
-| Accessibility text pattern                  | Browsers, Word, VS Code, Electron apps                            |
-| Reader text controls                        | Readers that publish one control per paragraph                    |
-| The open document named by the window title | PDF and EPUB readers                                              |
-| A passage copied moments earlier            | Applications that expose no text at all, such as Qt based readers |
+| Source                                      | Covers                                                                  |
+| ------------------------------------------- | ----------------------------------------------------------------------- |
+| A passage copied moments earlier            | All apps, including Chrome and Word, which also expose accessibility text |
+| Accessibility text pattern                  | Browsers, Word, VS Code, Electron apps when no copy is available        |
+| Reader text controls                        | Readers that publish one control per paragraph when no copy is available|
+| The open document named by the window title | PDF and EPUB readers when no copy is available                          |
 
-The clipboard source works on a copy you made yourself: copy a passage, then select a part of it within the valid window (10, 30 or 60 seconds) and TextGO uses that copy as the surrounding text. The copy has to contain the selection and be longer than it, so a text copied on its own never pretends to be context. A selection shorter than a word - a single character of classical Chinese, for instance - is accepted as well, but only when the copy cannot point at the wrong place: either the whole copy fits into the returned window, or the selection occurs in it once. Text the application produces itself, such as an answer or a translation, is never used.
+The clipboard source works on a copy you made yourself: copy a passage, then select a part of it within the valid window (10, 30 or 60 seconds) and TextGO uses that copy as the surrounding text, ahead of any paragraph from the accessibility text pattern. The copy has to contain the selection and be longer than it, so a text copied on its own never pretends to be context. A selection shorter than a word - a single character of classical Chinese, for instance - is accepted as well, but only when the copy cannot point at the wrong place: either the whole copy fits into the returned window, or the selection occurs in it once. Text the application produces itself, such as an answer or a translation, is never used.
 
 The reader control and open document sources keep a minimum of four characters, because a single character cannot be located in a page or a whole book.
 
