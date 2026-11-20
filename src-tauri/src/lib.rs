@@ -5,17 +5,16 @@ mod commands;
 mod document;
 mod error;
 mod handlers;
+mod input;
 mod platform;
 mod selection_profile;
 mod text;
 
 use clipboard_rs::ClipboardContext;
 use commands::*;
-use enigo::{Enigo, Settings};
 use fern::colors::ColoredLevelConfig;
-use handlers::{handle_keyboard_event, handle_mouse_event};
+use handlers::handle_keyboard_event;
 use log::LevelFilter;
-use rdev::listen;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{LazyLock, Mutex};
@@ -64,15 +63,6 @@ pub static REGISTERED_SHORTCUTS: LazyLock<Mutex<HashMap<u32, String>>> =
 
 // distinguish TextGO's simulated input from physical keys and other applications' input
 pub const SIMULATED_INPUT_MARKER: u32 = 0x0054_474f;
-
-// global Enigo instance for keyboard simulation
-pub static ENIGO: LazyLock<Mutex<Result<Enigo, enigo::NewConError>>> = LazyLock::new(|| {
-    Mutex::new(Enigo::new(&Settings {
-        event_source_user_data: Some(SIMULATED_INPUT_MARKER.into()),
-        windows_dw_extra_info: Some(SIMULATED_INPUT_MARKER as usize),
-        ..Settings::default()
-    }))
-});
 
 // global ClipboardContext instance for clipboard access
 pub static CLIPBOARD: LazyLock<Mutex<Result<ClipboardContext, String>>> =
@@ -260,6 +250,7 @@ pub fn run() {
             execute_shell,
             execute_powershell,
             detect_natural_language,
+            try_install_delta,
             enter_text,
             send_key,
             send_cut_keys,
@@ -329,16 +320,8 @@ fn setup_app(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     // start the clipboard change monitor; it only reads the platform counter
     clipboard_watch::start();
 
-    // start mouse event listener
-    // https://github.com/Narsil/rdev/issues/165
-    #[cfg(target_os = "macos")]
-    rdev::set_is_main_thread(false);
-
-    std::thread::spawn(|| {
-        if let Err(error) = listen(handle_mouse_event) {
-            log::error!("Error starting mouse event listener: {:?}", error);
-        }
-    });
+    // start mouse event listener (upstream input module handles macOS main-thread, permission retry)
+    input::start_mouse_listener();
 
     // setup system tray
     initialize_tray(&app_handle)?;
