@@ -1,15 +1,29 @@
 use crate::error::AppError;
+#[cfg(target_os = "macos")]
+use core_foundation::{
+    base::TCFType,
+    boolean::CFBoolean,
+    dictionary::{CFDictionary, CFDictionaryRef},
+    string::{CFString, CFStringRef},
+};
 
 #[cfg(target_os = "macos")]
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {
     unsafe fn AXIsProcessTrusted() -> bool;
+    unsafe fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> bool;
+    static kAXTrustedCheckOptionPrompt: CFStringRef;
 }
 
+/// Request accessibility permission using the native macOS system prompt.
 #[cfg(target_os = "macos")]
-#[link(name = "IOKit", kind = "framework")]
-unsafe extern "C" {
-    unsafe fn IOHIDCheckAccess(request_type: i32) -> i32;
+pub fn request_accessibility_prompt() -> bool {
+    unsafe {
+        let key = CFString::wrap_under_get_rule(kAXTrustedCheckOptionPrompt);
+        let value = CFBoolean::true_value();
+        let options = CFDictionary::from_CFType_pairs(&[(key, value)]);
+        AXIsProcessTrustedWithOptions(options.as_concrete_TypeRef())
+    }
 }
 
 /// Check if the application has accessibility permissions.
@@ -42,45 +56,5 @@ pub fn open_accessibility() -> Result<(), AppError> {
     #[cfg(not(target_os = "macos"))]
     {
         Err("Accessibility settings are only available on macOS".into())
-    }
-}
-
-/// Check if the application has input monitoring permissions.
-#[tauri::command]
-pub fn check_input_monitoring() -> Result<bool, AppError> {
-    #[cfg(target_os = "macos")]
-    {
-        // IOKit enumerations
-        // https://developer.apple.com/documentation/iokit/iokit_enumerations
-        const K_IOHID_REQUEST_TYPE_LISTEN_EVENT: i32 = 1;
-        const K_IOHID_ACCESS_TYPE_GRANTED: i32 = 0;
-
-        unsafe {
-            Ok(IOHIDCheckAccess(K_IOHID_REQUEST_TYPE_LISTEN_EVENT) == K_IOHID_ACCESS_TYPE_GRANTED)
-        }
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        // always return true on non-macOS platforms
-        Ok(true)
-    }
-}
-
-/// Open input monitoring settings page.
-#[tauri::command]
-pub fn open_input_monitoring() -> Result<(), AppError> {
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
-            .spawn()
-            .map_err(|e| format!("Failed to open input monitoring settings: {}", e))?;
-        Ok(())
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        Err("Input monitoring settings are only available on macOS".into())
     }
 }

@@ -8,8 +8,8 @@
    */
   const PROMPT_PLACEHOLDER = `
 ${m.prompt_variables_tip()}
-{{clipboard}} - ${m.clipboard_text()}
 {{selection}} - ${m.selected_text()}
+{{clipboard}} - ${m.clipboard_text()}
 `.trimStart();
 
   const TRANSLATION_PLACEHOLDER = `{{sourceLanguage}} - ${m.source_language()}
@@ -33,10 +33,10 @@ ${m.prompt_variables_tip()}
 
   // default values
   const DEFAULT_ICON = 'Robot';
-  const DEFAULT_MODEL = 'gemma4:e4b';
   const DEFAULT_PROVIDER = 'ollama';
   const DEFAULT_TEMPERATURE = 1;
   const DEFAULT_TOP_P = 1;
+  const MODEL_FETCH_TIMEOUT_MS = 5000;
 </script>
 
 <script lang="ts">
@@ -48,12 +48,16 @@ ${m.prompt_variables_tip()}
   import Modal from '$lib/components/Modal.svelte';
   import Select from '$lib/components/Select.svelte';
   import { PROMPT_MARK } from '$lib/constants';
+  import type { LLMClient } from '$lib/llm';
   import { NATURAL_CASES } from '$lib/matcher';
   import { updateActionId } from '$lib/shortcut';
   import { Loading } from '$lib/states.svelte';
   import {
     anthropicApiKey,
+    deepseekApiKey,
     geminiApiKey,
+    lmstudioHost,
+    ollamaHost,
     openaiApiKey,
     openrouterApiKey,
     providers,
@@ -63,6 +67,7 @@ ${m.prompt_variables_tip()}
   import { markdown } from '@codemirror/lang-markdown';
   import CubeIcon from 'phosphor-svelte/lib/CubeIcon';
   import SlidersHorizontalIcon from 'phosphor-svelte/lib/SlidersHorizontalIcon';
+  import { onMount } from 'svelte';
 
   const { prompts }: { prompts: Prompt[] } = $props();
   const loading = new Loading();
@@ -75,7 +80,8 @@ ${m.prompt_variables_tip()}
   let contextEnabled: boolean = $state(false);
   let contextAppend: boolean = $state(false);
   let modelProvider: string = $state(DEFAULT_PROVIDER);
-  let modelName: string = $state(DEFAULT_MODEL);
+  let modelName: string = $state('');
+  let providerSelected = false;
   let translationMode: boolean = $state(false);
   let targetLanguage: string | null = $state(null);
   let maxTokens: number | undefined = $state(undefined);
@@ -87,6 +93,115 @@ ${m.prompt_variables_tip()}
   let promptPlaceholder = $derived(
     `${PROMPT_PLACEHOLDER}${contextEnabled ? CONTEXT_PLACEHOLDER : ''}${translationMode ? TRANSLATION_PLACEHOLDER : ''}`
   );
+
+  // fetched model list state
+  let fetchedModels: string[] = $state([]);
+  let modelsLoading: boolean = $state(false);
+  let modelsRequestId = 0;
+  let modelsAbortController: AbortController | null = null;
+  let modelOptions = $derived(fetchedModels.map((id) => ({ value: id, label: id })));
+
+  /**
+   * Cancel any in-flight model list request and reset loading state.
+   */
+  function cancelModelFetch() {
+    modelsRequestId += 1;
+    if (modelsAbortController) {
+      modelsAbortController.abort();
+      modelsAbortController = null;
+    }
+    modelsLoading = false;
+  }
+
+  /**
+   * Handle modal close by cancelling any pending model fetch.
+   */
+  function handleModalClose() {
+    cancelModelFetch();
+    fetchedModels = [];
+  }
+
+  /**
+   * Fetch available model IDs for the selected provider.
+   *
+   * @param provider - provider ID or custom provider name
+   * @param preserveCurrent - keep the existing model name in the option list when editing or installing
+   */
+  async function loadModels(provider: string, preserveCurrent = false) {
+    cancelModelFetch();
+    fetchedModels = [];
+
+    if (!provider) {
+      return;
+    }
+
+    const requestId = ++modelsRequestId;
+    const controller = new AbortController();
+    modelsAbortController = controller;
+    modelsLoading = true;
+
+    let client: LLMClient;
+    try {
+      const { createLLMClient } = await import('$lib/llm');
+      if (requestId !== modelsRequestId) {
+        return;
+      }
+      client = createLLMClient(provider);
+    } catch {
+      // Missing API key or unconfigured provider silently falls back to manual input.
+      if (requestId === modelsRequestId) {
+        modelsAbortController = null;
+        modelsLoading = false;
+      }
+      return;
+    }
+
+    try {
+      const models = await client.listModels({
+        signal: controller.signal,
+        timeoutMs: MODEL_FETCH_TIMEOUT_MS
+      });
+      if (requestId !== modelsRequestId) {
+        return;
+      }
+
+      if (models.length > 0) {
+        const current = modelName.trim();
+        if (current && models.includes(current)) {
+          fetchedModels = models;
+        } else if (preserveCurrent && current) {
+          fetchedModels = [current, ...models];
+        } else {
+          fetchedModels = models;
+          modelName = models[0];
+        }
+      }
+    } catch (error) {
+      if (requestId !== modelsRequestId) {
+        return;
+      }
+      if (error instanceof Error && error.name === 'AbortError') {
+        return;
+      }
+      const isTimeout = error instanceof Error && error.name === 'TimeoutError';
+      alert({
+        level: 'warning',
+        message: isTimeout ? m.model_list_fetch_timeout() : m.model_list_fetch_failed()
+      });
+    } finally {
+      if (requestId === modelsRequestId) {
+        modelsAbortController = null;
+        modelsLoading = false;
+      }
+    }
+  }
+
+  onMount(() => {
+    return () => {
+      cancelModelFetch();
+    };
+  });
+
   // fill form fields
   const fillForm = (prompt: Prompt) => {
     promptName = prompt.id;
@@ -105,9 +220,80 @@ ${m.prompt_variables_tip()}
     customParamsJson = prompt.customParams === undefined ? '{}' : JSON.stringify(prompt.customParams, null, 2);
   };
 
+  /**
+   * Wait for provider configuration stores to load.
+   */
+  async function waitForProviderStores() {
+    await Promise.all([
+      ollamaHost.ready,
+      lmstudioHost.ready,
+      openrouterApiKey.ready,
+      openaiApiKey.ready,
+      anthropicApiKey.ready,
+      geminiApiKey.ready,
+      xaiApiKey.ready,
+      deepseekApiKey.ready,
+      providers.ready
+    ]);
+  }
+
+  /**
+   * Pick the first configured provider in display order, falling back to Ollama when none are configured.
+   *
+   * @returns default provider ID or custom provider name
+   */
+  function getDefaultProvider(): string {
+    const configured: Array<[string, string]> = [
+      ['ollama', ollamaHost.current],
+      ['lmstudio', lmstudioHost.current],
+      ['openrouter', openrouterApiKey.current],
+      ['openai', openaiApiKey.current],
+      ['anthropic', anthropicApiKey.current],
+      ['google', geminiApiKey.current],
+      ['xai', xaiApiKey.current],
+      ['deepseek', deepseekApiKey.current]
+    ];
+    for (const [provider, value] of configured) {
+      if (value.trim()) {
+        return provider;
+      }
+    }
+    const firstCustom = providers.current.find((p) => p.name.trim() && p.baseUrl.trim() && p.apiKey.trim());
+    return firstCustom ? firstCustom.name : DEFAULT_PROVIDER;
+  }
+
+  /**
+   * Check whether a provider option is currently selectable in the dropdown.
+   *
+   * @param provider - provider ID or custom provider name
+   * @returns whether the provider can be used
+   */
+  function isProviderSelectable(provider: string): boolean {
+    switch (provider) {
+      case 'ollama':
+      case 'lmstudio':
+        return true;
+      case 'openrouter':
+        return Boolean(openrouterApiKey.current.trim());
+      case 'openai':
+        return Boolean(openaiApiKey.current.trim());
+      case 'anthropic':
+        return Boolean(anthropicApiKey.current.trim());
+      case 'google':
+        return Boolean(geminiApiKey.current.trim());
+      case 'xai':
+        return Boolean(xaiApiKey.current.trim());
+      case 'deepseek':
+        return Boolean(deepseekApiKey.current.trim());
+      default:
+        return providers.current.some((p) => p.name === provider);
+    }
+  }
+
   // show modal dialog
   let modal: Modal;
-  export const showModal = (id?: string) => {
+  export const showModal = async (id?: string) => {
+    await waitForProviderStores();
     if (id) {
       const prompt = prompts.find((p) => p.id === id);
       if (!prompt) {
@@ -115,17 +301,30 @@ ${m.prompt_variables_tip()}
       }
       promptId = id;
       fillForm(prompt);
+    } else if (!providerSelected || !isProviderSelectable(modelProvider)) {
+      const defaultProvider = getDefaultProvider();
+      if (modelProvider !== defaultProvider) {
+        modelProvider = defaultProvider;
+        modelName = '';
+      }
     }
-    modal.show();
+    await modal.show();
+    if (modal.isOpen()) {
+      void loadModels(modelProvider, Boolean(id));
+    }
   };
 
   // install from external source
-  export const install = (prompt: Prompt) => {
+  export const install = async (prompt: Prompt) => {
     if (modal.isOpen()) {
       return;
     }
+    await waitForProviderStores();
     fillForm(prompt);
-    modal.show();
+    await modal.show();
+    if (modal.isOpen()) {
+      void loadModels(modelProvider, true);
+    }
   };
 
   /**
@@ -146,6 +345,10 @@ ${m.prompt_variables_tip()}
       alert({ level: 'error', message: m.name_already_used() });
       const nameInput = form.querySelector('input[name="name"]');
       (nameInput as HTMLInputElement | null)?.focus();
+      return;
+    }
+    modelName = modelName.trim();
+    if (!modelName) {
       return;
     }
     if (!promptText || promptText.trim().length === 0) {
@@ -222,8 +425,9 @@ ${m.prompt_variables_tip()}
       systemPrompt = '';
       contextEnabled = false;
       contextAppend = false;
-      modelProvider = DEFAULT_PROVIDER;
-      modelName = DEFAULT_MODEL;
+      modelProvider = getDefaultProvider();
+      modelName = '';
+      providerSelected = false;
       translationMode = false;
       targetLanguage = null;
       maxTokens = undefined;
@@ -252,7 +456,7 @@ ${m.prompt_variables_tip()}
   </label>
 {/snippet}
 
-<Modal title="{promptId ? m.update() : m.add()}{m.prompt_template()}" bind:this={modal}>
+<Modal title="{promptId ? m.update() : m.add()}{m.prompt_template()}" onclose={handleModalClose} bind:this={modal}>
   <form
     method="post"
     use:enhance={({ formElement, cancel }) => {
@@ -279,30 +483,56 @@ ${m.prompt_variables_tip()}
               { value: 'anthropic', label: 'Anthropic', disabled: !anthropicApiKey.current },
               { value: 'google', label: 'Google', disabled: !geminiApiKey.current },
               { value: 'xai', label: 'xAI', disabled: !xaiApiKey.current },
+              { value: 'deepseek', label: 'DeepSeek', disabled: !deepseekApiKey.current },
               ...providers.current.map((p) => ({ value: p.name, label: p.name }))
             ]}
             onchange={(event) => {
-              const target = event.currentTarget;
-              if (target.value !== 'ollama' && target.value !== 'lmstudio') {
-                // reset model name for cloud providers
-                modelName = '';
-              }
+              const nextProvider = event.currentTarget.value;
+              providerSelected = true;
+              modelName = '';
+              void loadModels(nextProvider, false);
             }}
             class="w-full select-sm"
           />
         </span>
         <span>
           <Label required>{m.model_name()}</Label>
-          <label class="input w-full input-sm">
-            <CubeIcon class="size-5 opacity-50" />
-            <input class="grow" {...schema.modelName} bind:value={modelName} />
-          </label>
+          {#if modelsLoading}
+            <label class="input w-full input-sm">
+              <span class="loading size-4 loading-spinner opacity-50"></span>
+              <input class="grow" {...schema.modelName} bind:value={modelName} disabled />
+            </label>
+          {:else if modelOptions.length > 0}
+            <Select
+              bind:value={modelName}
+              options={modelOptions}
+              placeholder={m.model_name()}
+              class="w-full select-sm"
+            />
+          {:else}
+            <label class="input w-full input-sm">
+              <CubeIcon class="size-5 opacity-50" />
+              <input class="grow" {...schema.modelName} bind:value={modelName} />
+            </label>
+          {/if}
         </span>
       </div>
       <Label required tip={m.prompt_tip()}>{m.prompt()}</Label>
       <div class="flex items-center gap-2">
         <label class="label mr-2 min-h-8 shrink-0 cursor-pointer justify-start gap-2">
-          <input type="checkbox" class="checkbox checkbox-sm" bind:checked={translationMode} />
+          <input
+            type="checkbox"
+            class="checkbox checkbox-sm"
+            bind:checked={translationMode}
+            onchange={(event) => {
+              if (event.currentTarget.checked && !promptId && !promptText.trim()) {
+                promptText = m.translation_default_prompt({
+                  targetLanguage: '{{targetLanguage}}',
+                  selection: '{{selection}}'
+                });
+              }
+            }}
+          />
           <span>{m.translation_mode()}</span>
         </label>
         <Select
