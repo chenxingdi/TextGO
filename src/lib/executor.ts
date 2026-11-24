@@ -17,6 +17,7 @@ import {
 import type { Entry, Processor, Rule, Script, SelectionContext, TranslationPrompt, WindowPlacement } from '$lib/types';
 import { invoke } from '@tauri-apps/api/core';
 import { openPath, openUrl } from '@tauri-apps/plugin-opener';
+import { type } from '@tauri-apps/plugin-os';
 import { memoize } from 'es-toolkit/function';
 import {
   camelCase,
@@ -43,6 +44,7 @@ import FunctionIcon from 'phosphor-svelte/lib/FunctionIcon';
 import ScissorsIcon from 'phosphor-svelte/lib/ScissorsIcon';
 import SelectionBackgroundIcon from 'phosphor-svelte/lib/SelectionBackgroundIcon';
 import SwapIcon from 'phosphor-svelte/lib/SwapIcon';
+import TrashIcon from 'phosphor-svelte/lib/TrashIcon';
 
 /**
  * Executor function type.
@@ -100,6 +102,14 @@ async function usesKeyboardApi(code: string): Promise<boolean> {
 }
 
 /**
+ * Key that removes the current selection on this platform.
+ *
+ * The key labelled delete on a Mac keyboard reports as backspace, while the forward delete needs the
+ * function key, so only Windows and Linux send the dedicated delete key.
+ */
+const DELETE_SELECTION_KEY = type() === 'macos' ? 'Backspace' : 'Delete';
+
+/**
  * Default actions.
  */
 export const DEFAULT_ACTIONS: Processor[] = [
@@ -135,6 +145,21 @@ export const DEFAULT_ACTIONS: Processor[] = [
     icon: SelectionBackgroundIcon,
     process: () => {
       invoke('send_paste_keys', { suspendShortcuts: true });
+      return '';
+    },
+    builtIn: true,
+    noResult: true
+  },
+  {
+    value: 'delete_text',
+    label: m.delete_text(),
+    icon: TrashIcon,
+    process: (text: string) => {
+      // deleting must not touch the clipboard, so send a key instead of cutting the selection;
+      // without a selection the same key would remove the character after the cursor
+      if (text) {
+        invoke('send_key', { key: DELETE_SELECTION_KEY, modifiers: [] });
+      }
       return '';
     },
     builtIn: true,

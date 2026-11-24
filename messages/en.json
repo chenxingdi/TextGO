@@ -11,6 +11,7 @@
   "cut": "Cut",
   "copy": "Copy",
   "paste": "Paste",
+  "delete_text": "Delete",
   "insert": "Insert",
   "speak": "Read Aloud",
   "stop_speaking": "Stop Reading",
