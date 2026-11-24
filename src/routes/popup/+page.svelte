@@ -337,7 +337,7 @@
   let canRegenerate = $derived(!!latestAssistant || chatMessages.at(-1)?.role === 'user');
 
   // translation mode state
-  let translationMode = $derived(!!entry?.translation && !conversationMode);
+  let translationMode = $derived.by(() => !!entry?.translation && !conversationMode);
   let translationText = $state('');
   let sourceLanguage = $state('');
   let targetLanguage = $state('');
